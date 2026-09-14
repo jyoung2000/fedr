@@ -37,7 +37,8 @@ class EnvSettings(BaseSettings):
 
     # Gateway (DEX middleware)
     gateway_url: str = "http://gateway:15888"
-    gateway_passphrase: str | None = None
+    gateway_passphrase: str | None = None  # not used by the app (Gateway reads GATEWAY_PASSPHRASE itself)
+    gateway_api_key: str | None = None  # bearer token when Gateway runs with GATEWAY_REQUIRE_AUTH=true
     gateway_enabled: bool = True
     gateway_timeout_s: float = 8.0
 

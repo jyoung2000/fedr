@@ -25,6 +25,7 @@ class GeneralSettings(BaseModel):
         default_factory=lambda: ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BTC/USDT", "ETH/USDT", "SOL/USDT"]
     )
     quote_assets: list[str] = Field(default_factory=lambda: ["USDC", "USDT", "USD"])
+    dexes: list[str] = Field(default_factory=lambda: ["jupiter", "uniswap-base", "uniswap-arbitrum"])  # Gateway venues to scan
     scan_interval_ms: int = 1500
     bot_enabled: bool = True  # master on/off for the scanner + auto-execution
 

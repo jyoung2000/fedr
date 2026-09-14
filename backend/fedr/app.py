@@ -104,7 +104,7 @@ class FedrApp:
         await self.wallets.load()
         self.exchange_accounts = await self.repo.list_exchange_accounts()
         if self.env.gateway_enabled:
-            self.gateway = GatewayClient(self.env.gateway_url, self.env.gateway_passphrase and None, timeout_s=self.env.gateway_timeout_s)
+            self.gateway = GatewayClient(self.env.gateway_url, self.env.gateway_api_key, timeout_s=self.env.gateway_timeout_s)
             self.gateway_ok = await self.gateway.ping()
             if not self.gateway_ok:
                 log.warning("gateway unreachable - DEX venues unavailable until it comes up", url=self.env.gateway_url)
@@ -211,12 +211,14 @@ class FedrApp:
                 await self._build_cex_connectors(mode, pairs)
                 await self._build_dex_connectors(mode, pairs)
             # connect everything (tolerating failures - a venue that fails stays SUPPORTED, not CONNECTED)
-            for c in list(ctx.connectors.values()):
+            async def _connect(c):
                 try:
                     await asyncio.wait_for(c.connect(), timeout=max(10.0, s.advanced.connector_timeout_s * 3))
                 except Exception as exc:
                     c.last_error = str(exc)[:200]
                     log.warning("connector failed to connect", venue=c.name, error=str(exc)[:200])
+
+            await asyncio.gather(*(_connect(c) for c in list(ctx.connectors.values())))
             if mode in (TradingMode.SIMULATION, TradingMode.PAPER):
                 ctx.ledger = PaperLedger()
                 saved = await self.repo.load_paper_balances(mode) if self.repo else {}
@@ -274,7 +276,7 @@ class FedrApp:
         s = self.settings
         if not (self.gateway and self.gateway_ok):
             return
-        enabled = self.settings.general.__dict__.get("dexes") or DEFAULT_DEXES
+        enabled = self.settings.general.dexes or DEFAULT_DEXES
         testnet = mode is TradingMode.TESTNET
         for name in enabled:
             spec = DEXES.get(name)
@@ -479,7 +481,7 @@ class FedrApp:
         mode_changed = new.general.mode is not self.settings.general.mode
         if mode_changed and self.settings.general.mode is TradingMode.LIVE:
             new.live.activated = False  # leaving live always deactivates
-        structural = mode_changed or new.general.pairs != self.settings.general.pairs or new.strategies != self.settings.strategies or new.paper.starting_balances != self.settings.paper.starting_balances and self.mode in (TradingMode.PAPER, TradingMode.SIMULATION) and not (await self.repo.load_paper_balances(new.general.mode) if self.repo else {})
+        structural = mode_changed or new.general.pairs != self.settings.general.pairs or new.general.dexes != self.settings.general.dexes or new.strategies != self.settings.strategies or new.paper.starting_balances != self.settings.paper.starting_balances and self.mode in (TradingMode.PAPER, TradingMode.SIMULATION) and not (await self.repo.load_paper_balances(new.general.mode) if self.repo else {})
         if self.mode in (TradingMode.PAPER, TradingMode.SIMULATION) and self.ctx.ledger is not None and self.repo:
             await self.repo.save_paper_balances(self.mode, self.ctx.ledger.dump())
         old_mode = self.mode

@@ -7,17 +7,16 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-# ---------- python base ----------
+# ---------- python dependencies + package ----------
 FROM python:3.11-slim-bookworm AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential libffi-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY backend/pyproject.toml ./
-RUN pip install --upgrade pip && pip install . 2>/dev/null || true
 COPY backend/ ./
-RUN pip install --no-deps . && pip install $(python -c "import tomllib;print(' '.join(f'\"{d}\"' for d in tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" | xargs)
+RUN pip install --upgrade pip && pip install .
 
-# ---------- dev target ----------
+# ---------- dev target (hot reload, tests) ----------
 FROM base AS dev
 RUN pip install pytest pytest-asyncio hypothesis ruff
 COPY --from=frontend /ui/dist ./fedr/static
@@ -26,8 +25,9 @@ CMD ["uvicorn", "fedr.main:app", "--host", "0.0.0.0", "--port", "8935"]
 # ---------- production ----------
 FROM python:3.11-slim-bookworm AS prod
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN groupadd -r fedr --gid 10001 && useradd -r -g fedr --uid 10001 --home-dir /app --shell /usr/sbin/nologin fedr \
-    && mkdir -p /data && chown fedr:fedr /data
+RUN groupadd -r fedr --gid 10001 \
+    && useradd -r -g fedr --uid 10001 --home-dir /app --shell /usr/sbin/nologin fedr \
+    && mkdir -p /data /app && chown fedr:fedr /data /app
 WORKDIR /app
 COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
