@@ -1,9 +1,9 @@
 {
   "generated": "2026-09-14",
   "version": "0.2.0-rc1",
-  "git": "b456837",
+  "git": "d8a48c8",
   "production_ready": false,
-  "production_ready_reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, RT-06, RT-07, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
+  "production_ready_reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
   "classification_vocabulary": [
     "IMPLEMENTED + VERIFIED",
     "IMPLEMENTED + PARTIALLY VERIFIED",
@@ -15,9 +15,9 @@
     "BLOCKED BY EXTERNAL DEPENDENCY"
   ],
   "counts": {
-    "IMPLEMENTED + VERIFIED": 43,
+    "IMPLEMENTED + VERIFIED": 45,
     "BLOCKED BY EXTERNAL DEPENDENCY": 8,
-    "IMPLEMENTED + PARTIALLY VERIFIED": 16,
+    "IMPLEMENTED + PARTIALLY VERIFIED": 14,
     "IMPLEMENTED + UNVERIFIED": 2,
     "MUST BLOCK": 1
   },
@@ -77,8 +77,8 @@
       "area": "runtime",
       "capability": "Image build + container runtime with substituted (locally imported) base images: pip install, npm ci, vite build, non-root user, healthcheck",
       "status": "IMPLEMENTED + PARTIALLY VERIFIED",
-      "evidence": "docker/Dockerfile built with --build-arg BASE_IMAGE=fedr/base-local:sandbox (a trimmed copy of this machine's Debian rootfs). See docs/DOCKER_SECURITY_REPORT.md for the exact commands and outputs.",
-      "limitation": "Substitute base images are not the images users get; treat as a topology/runtime test, not a build reproducibility test.",
+      "evidence": "docker/Dockerfile built unmodified with --build-arg BASE_IMAGE/NODE_IMAGE=fedr/base-local:sandbox (trimmed copy of this machine's Debian rootfs, Python 3.11.15 / Node 22.22.2): npm ci, vite build, python -m pip install ., user creation all executed; image runs as uid 10001 with the healthcheck green. docs/DOCKER_SECURITY_REPORT.md.",
+      "limitation": "Substitute base images are not the images users get; official images could not be pulled (registry denied).",
       "critical": true
     },
     {
@@ -86,8 +86,8 @@
       "area": "runtime",
       "capability": "Compose stack up, /health, restart, down/up persistence, gateway not published",
       "status": "IMPLEMENTED + PARTIALLY VERIFIED",
-      "evidence": "docs/DOCKER_SECURITY_REPORT.md (runtime section). The gateway service could not run (RT-05); the app service was exercised with `docker compose up -d --no-deps app` plus a stand-in container on the internal network to prove non-exposure.",
-      "limitation": "Repeat with the real Gateway image on a host with registry access.",
+      "evidence": "docs/DOCKER_SECURITY_REPORT.md runtime section: compose config OK for base + 4 overlays; `docker compose up -d --no-deps app` \u2192 healthy; /health/live, /health, /health/ready 200 (SYSTEM READY); 401/200 auth; UI served; emergency stop persisted across `compose restart` and `compose down && up`; SQLite WAL in the named volume.",
+      "limitation": "The gateway service could not run (RT-05); its isolation was proven with a stand-in container on the same private network. Repeat with the real Gateway image on a host with registry access.",
       "critical": true
     },
     {
@@ -103,18 +103,18 @@
       "id": "RT-06",
       "area": "runtime",
       "capability": "Gateway is never published on a host port; app publishes 127.0.0.1:8935 only",
-      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
-      "evidence": "`docker compose config` shows no `ports:` on the gateway service and `127.0.0.1:8935:8935` on app; runtime check with a stand-in gateway container in docs/DOCKER_SECURITY_REPORT.md.",
-      "limitation": "Runtime check used a stand-in container, not the Gateway image.",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "Static: `docker compose config` shows no `ports:` on gateway and `127.0.0.1:8935` only on app. Runtime: a container attached to `fedr_fedr-internal` with alias `gateway` answered the app (200) and was unreachable from the host (`docker port` empty, curl \u2192 no route). docs/DOCKER_SECURITY_REPORT.md.",
+      "limitation": "",
       "critical": true
     },
     {
       "id": "RT-07",
       "area": "runtime",
       "capability": "Container hardening: non-root uid 10001, cap_drop ALL, no-new-privileges, read-only root FS, tmpfs /tmp, /data volume",
-      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
-      "evidence": "Static: docker-compose.yml, docker/Dockerfile. Runtime: docs/DOCKER_SECURITY_REPORT.md (id, capabilities, read-only test inside the running container).",
-      "limitation": "Verified in the sandbox daemon (overlay2, no iptables); re-run on the target host.",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "docker inspect: User=fedr ReadonlyRootfs=true CapDrop=[ALL] no-new-privileges tmpfs /tmp uid 10001; inside the container: uid=10001, CapEff=0, /app read-only, /data and /tmp writable, master.key 0600. docs/DOCKER_SECURITY_REPORT.md.",
+      "limitation": "Verified in the sandbox daemon (overlay2, --iptables=false); re-run on the target host.",
       "critical": true
     },
     {
@@ -140,7 +140,7 @@
       "area": "runtime",
       "capability": "Startup fails safely on unsafe/missing critical configuration (live boot default, live-allowed without token, bad master key, unwritable data dir)",
       "status": "IMPLEMENTED + VERIFIED",
-      "evidence": "fedr/config/env.py::validate_startup; tests/test_api.py startup tests; process exits non-zero with the reason.",
+      "evidence": "backend/fedr/config/env.py::validate_startup; tests/test_api.py startup tests; observed in Docker: a root-owned bind-mounted /data made the container exit with 'FEDR_DATA_DIR /data is not writable' instead of running without persistence (docs/DOCKER_SECURITY_REPORT.md finding 4).",
       "limitation": "",
       "critical": true
     },

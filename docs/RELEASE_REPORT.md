@@ -1,4 +1,7 @@
-# Release report — FEDR 0.1.0
+# Release report — FEDR 0.1.0 (phase 1, historical)
+
+> Superseded for verification status by the phase-2 documents: `docs/FINAL_PRODUCTION_REPORT.md`,
+> `docs/PRODUCTION_VERIFICATION_MATRIX.md` and `docs/DOCKER_SECURITY_REPORT.md` (Docker was run in phase 2).
 
 This report states what was built, what was verified, and — explicitly — what was **not** verified.
 Nothing below claims to work unless it was exercised in this build environment.

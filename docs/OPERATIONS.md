@@ -82,7 +82,8 @@ backup) restores it into a fresh installation and verifies the address.
 **Verify a deployment** (`scripts/verify_production.py`): runs lint, unit + adversarial tests, integration
 tests (process-level; external checks skip with `EXTERNAL ENVIRONMENT REQUIRED` unless enabled), secret
 scan, dependency audits, frontend build, contract compile, compose config; `--docker` builds and starts
-the stack and probes `/health`; `--ui` runs the Playwright QA. Writes `docs/PRODUCTION_VERIFICATION_REPORT.md`.
+the stack and probes `/health` (`--docker-prebuilt` skips the build and probes an already-built image); `--ui`
+runs the Playwright QA. Writes `docs/PRODUCTION_VERIFICATION_REPORT.md`.
 Enable external checks with: `FEDR_IT_DOCKER=1` (running stack), `FEDR_IT_NETWORK=1` (public market data),
 `FEDR_IT_CCXT_EXCHANGE/KEY/SECRET` + `FEDR_IT_CCXT_SANDBOX=1` (sandbox round-trip),
 `FEDR_IT_GATEWAY_URL` (Gateway), `FEDR_IT_TESTNET=1` + `FEDR_RPC_SEPOLIA` + `FEDR_IT_TESTNET_ADDRESS`.

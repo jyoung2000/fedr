@@ -50,20 +50,28 @@ _BIP39 = _bip39_words()
 
 def _looks_like_bip39(seq: str) -> bool:
     words = seq.split()
-    if _BIP39 is None:  # package unavailable: only flag when every word is short and there are exactly 12/24
+    if (
+        _BIP39 is None
+    ):  # package unavailable: only flag when every word is short and there are exactly 12/24
         return len(words) in (12, 24)
     return all(w in _BIP39 for w in words)
 
 
 def main() -> int:
-    files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    files = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True
+    ).stdout.split()
     problems = []
     for rel in files:
         if rel in (".env",) or rel.endswith(".env") or rel.endswith(".keystore.json"):
             problems.append(f"{rel}: secret-bearing file tracked")
             continue
         p = ROOT / rel
-        if p.suffix in SKIP_SUFFIX or any(part in rel for part in SKIP_PATH_PARTS) or not p.is_file():
+        if (
+            p.suffix in SKIP_SUFFIX
+            or any(part in rel for part in SKIP_PATH_PARTS)
+            or not p.is_file()
+        ):
             continue
         try:
             text = p.read_text(errors="ignore")
@@ -72,7 +80,9 @@ def main() -> int:
         for name, pat in PATTERNS:
             for m in pat.finditer(text):
                 val = m.group(0)
-                if name == "evm private key" and (val.lower() in ALLOW or "tests/" in rel or "test_" in rel):
+                if name == "evm private key" and (
+                    val.lower() in ALLOW or "tests/" in rel or "test_" in rel
+                ):
                     # 64-hex values in tests are tx hashes / fixtures; only the ALLOW list is permitted as keys
                     continue
                 if name == "mnemonic" and not _looks_like_bip39(val):
@@ -80,7 +90,7 @@ def main() -> int:
                 if name == "evm private key" and re.search(
                     r"(hash|tx|txid|sha|digest|topic|selector)",
                     text[max(0, m.start() - 80) : m.start()],
-                    re.I,
+                    re.IGNORECASE,
                 ):
                     continue
                 problems.append(f"{rel}: possible {name}: {val[:12]}…")

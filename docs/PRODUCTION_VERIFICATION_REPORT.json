@@ -1,0 +1,195 @@
+{
+  "production_ready": false,
+  "verdict": "NOT PRODUCTION READY",
+  "steps": [
+    {
+      "name": "lint (ruff check)",
+      "command": "/home/user/fedr/.venv/bin/python -m ruff check fedr tests",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.0,
+      "output_tail": "All checks passed!\n",
+      "details": {}
+    },
+    {
+      "name": "format (ruff format --check)",
+      "command": "/home/user/fedr/.venv/bin/python -m ruff format --check fedr tests",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.0,
+      "output_tail": "111 files already formatted\n",
+      "details": {}
+    },
+    {
+      "name": "unit + adversarial tests",
+      "command": "/home/user/fedr/.venv/bin/python -m pytest tests --ignore=tests/integration -q -p no:cacheprovider",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 43.0,
+      "output_tail": "........................................................................ [ 39%]\n........................................................................ [ 79%]\n.....................................                                    [100%]\n=============================== warnings summary ===============================\ntests/test_profit_guard_bypass.py::test_api_cannot_execute_forged_ids_or_activate_live_from_env_alone\n  /home/user/fedr/.venv/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-23 (_connection_worker_thread)\n  \n  Traceback (most recent call last):\n    File \"/home/user/fedr/.venv/lib/python3.11/site-packages/aiosqlite/core.py\", line 66, in _connection_worker_thread\n      future.get_loop().call_soon_threadsafe(set_result, future, result)\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 807, in call_soon_threadsafe\n      self._check_closed()\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  During handling of the above exception, another exception occurred:\n  \n  Traceback (most recent call last):\n    File \"/usr/lib/python3.11/threading.py\", line 1045, in _bootstrap_inner\n      self.run()\n    File \"/usr/lib/python3.11/threading.py\", line 982, in run\n      self._target(*self._args, **self._kwargs)\n    File \"/home/user/fedr/.venv/lib/python3.11/site-packages/aiosqlite/core.py\", line 75, in _connection_worker_thread\n      future.get_loop().call_soon_threadsafe(set_exception, future, e)\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 807, in call_soon_threadsafe\n      self._check_closed()\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n181 passed, 1 warning in 41.27s\n",
+      "details": {
+        "passed": 181,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "external_skips": []
+      }
+    },
+    {
+      "name": "integration tests (process-level + environment-gated)",
+      "command": "/home/user/fedr/.venv/bin/python -m pytest tests/integration -q -rs -p no:cacheprovider",
+      "status": "PASS",
+      "reason": "5 check(s) need an external environment (listed below)",
+      "seconds": 100.2,
+      "output_tail": "sssss...........                                                         [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: running compose stack (set FEDR_IT_DOCKER=1 after `docker compose up -d`)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: internet egress to exchange public APIs (set FEDR_IT_NETWORK=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: exchange SANDBOX API keys (FEDR_IT_CCXT_EXCHANGE, FEDR_IT_CCXT_KEY, FEDR_IT_CCXT_SECRET, FEDR_IT_CCXT_SANDBOX=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: a running Hummingbot Gateway (set FEDR_IT_GATEWAY_URL, e.g. http://127.0.0.1:15888)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: testnet RPC + funded test wallet (FEDR_IT_TESTNET=1, FEDR_RPC_SEPOLIA, FEDR_IT_TESTNET_ADDRESS)\n11 passed, 5 skipped in 99.47s (0:01:39)\n",
+      "details": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 5,
+        "errors": 0,
+        "external_skips": [
+          "EXTERNAL ENVIRONMENT REQUIRED: a running Hummingbot Gateway (set FEDR_IT_GATEWAY_URL, e.g. http://127.0.0.1:15888)",
+          "EXTERNAL ENVIRONMENT REQUIRED: exchange SANDBOX API keys (FEDR_IT_CCXT_EXCHANGE, FEDR_IT_CCXT_KEY, FEDR_IT_CCXT_SECRET, FEDR_IT_CCXT_SANDBOX=1)",
+          "EXTERNAL ENVIRONMENT REQUIRED: internet egress to exchange public APIs (set FEDR_IT_NETWORK=1)",
+          "EXTERNAL ENVIRONMENT REQUIRED: running compose stack (set FEDR_IT_DOCKER=1 after `docker compose up -d`)",
+          "EXTERNAL ENVIRONMENT REQUIRED: testnet RPC + funded test wallet (FEDR_IT_TESTNET=1, FEDR_RPC_SEPOLIA, FEDR_IT_TESTNET_ADDRESS)"
+        ]
+      }
+    },
+    {
+      "name": "secret scan (tracked files)",
+      "command": "/home/user/fedr/.venv/bin/python /home/user/fedr/scripts/secret_scan.py",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.2,
+      "output_tail": "secret scan: OK\n",
+      "details": {}
+    },
+    {
+      "name": "python dependency vulnerabilities (pip-audit)",
+      "command": "pip-audit --progress-spinner off",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 1.0,
+      "output_tail": "No known vulnerabilities found\n",
+      "details": {}
+    },
+    {
+      "name": "frontend typecheck (tsc)",
+      "command": "npx tsc --noEmit",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 5.2,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "frontend build (vite)",
+      "command": "npm run build",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 6.6,
+      "output_tail": "\n> fedr-ui@0.1.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.0 building client environment for production...\ntransforming...\n\u2713 82 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.45 kB \u2502 gzip:   0.29 kB\ndist/assets/index-DAYLI-4v.css   27.21 kB \u2502 gzip:   6.05 kB\ndist/assets/index-DW27N66g.js   377.64 kB \u2502 gzip: 109.31 kB\n\n\u2713 built in 784ms\n",
+      "details": {}
+    },
+    {
+      "name": "frontend dependency vulnerabilities (npm audit)",
+      "command": "npm audit --audit-level=high",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.5,
+      "output_tail": "found 0 vulnerabilities\n",
+      "details": {}
+    },
+    {
+      "name": "contract compile (solc-js 0.8.28)",
+      "command": "node compile.js",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 3.1,
+      "output_tail": "compiled FlashLoanArbitrage with 0.8.28+commit.7893614a.Emscripten.clang: 0 warning(s), bytecode 5227 bytes\n",
+      "details": {}
+    },
+    {
+      "name": "contract static analysis (slither)",
+      "command": "slither .",
+      "status": "SKIPPED",
+      "reason": "slither not installed",
+      "seconds": 0.0,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "contract fork tests (foundry)",
+      "command": "forge test",
+      "status": "SKIPPED",
+      "reason": "foundry (forge) not installed; EVM tests run under pytest via py-evm instead",
+      "seconds": 0.0,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "compose config valid (base)",
+      "command": "docker compose -f docker-compose.yml config -q",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.1,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "compose config valid (docker-compose.dev.yml)",
+      "command": "docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.1,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "compose config valid (docker-compose.paper.yml)",
+      "command": "docker compose -f docker-compose.yml -f docker-compose.paper.yml config -q",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.1,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "compose config valid (docker-compose.testnet.yml)",
+      "command": "docker compose -f docker-compose.yml -f docker-compose.testnet.yml config -q",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.1,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "compose config valid (docker-compose.live.yml)",
+      "command": "docker compose -f docker-compose.yml -f docker-compose.live.yml config -q",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 0.1,
+      "output_tail": "",
+      "details": {}
+    },
+    {
+      "name": "docker up (prebuilt image) + /health/live + /health/ready + auth",
+      "command": "docker compose up -d --no-deps --no-build app && sleep 15 && curl -fsS http://127.0.0.1:8935/health/live && curl -fsS http://127.0.0.1:8935/health/ready && test \"$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8935/api/trading/state)\" = 401 && docker compose ps",
+      "status": "PASS",
+      "reason": "gateway service not started (image unavailable here); build not exercised",
+      "seconds": 15.5,
+      "output_tail": "{\"status\":\"ok\"}{\"status\":\"ready\",\"checks\":{\"database\":true,\"profit_guard\":true,\"risk_engine\":true,\"strategy_engine\":true,\"scan_loop\":true,\"gateway\":true,\"not_emergency_stopped\":true},\"mode\":\"simulation\"}NAME       IMAGE             COMMAND                 SERVICE   CREATED          STATUS                    PORTS\nfedr-app   fedr/app:latest   \"python -m fedr.main\"   app       15 seconds ago   Up 15 seconds (healthy)   127.0.0.1:8935->8935/tcp\n Network fedr_fedr-internal Creating \n Network fedr_fedr-internal Created \n Container fedr-app Creating \n app IPv4 forwarding is disabled. Networking will not work. \n Container fedr-app Created \n Container fedr-app Starting \n Container fedr-app Started \n",
+      "details": {}
+    },
+    {
+      "name": "UI QA (Playwright, mocked states, 4 widths)",
+      "command": "/home/user/fedr/.venv/bin/python qa/ui_qa.py --mock",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 72.8,
+      "output_tail": "counters show 'Market data updates'\n  [PASS] features@400 health: counters show '987,654'\n  [PASS] features@400 health: counters show 'Market data rejections'\n  [PASS] features@400 health: counters show 'Connector errors'\n  [PASS] features@400 health: venue list names venues with health text\n  [PASS] features@400 health: liveness ALIVE + breakers NONE TRIPPED + gas listed\n  [PASS] features@400 wallets: no horizontal overflow\n  [PASS] features@400 wallets: every visible input is labelled\n  [PASS] features@400 wallets: ledgers show 'Deposits'\n  [PASS] features@400 wallets: ledgers show 'Withdrawals'\n  [PASS] features@400 wallets: ledgers show 'CONFIRMED'\n  [PASS] features@400 wallets: ledgers show 'PENDING'\n  [PASS] features@400 wallets: ledgers show 'BROADCAST'\n  [PASS] features@400 wallets: ledgers show 'FAILED'\n  [PASS] features@400 wallets: ledgers show '0xabcdef\u202689abcd'\n  [PASS] features@400 wallets: ledgers show '0x111111\u2026111111'\n  [PASS] features@400 wallets: ledgers show 'insufficient funds for gas'\n  [PASS] features@400 import: invalid JSON rejected client-side\n  [PASS] features@400 import: passphrase cleared after invalid JSON\n  [PASS] features@400 import: API 400 detail shown verbatim\n  [PASS] features@400 import: passphrase field cleared after API error\n  [PASS] features@400 import: restored address shown\n  [PASS] features@400 import: POST body has keystore object, passphrase, label, mode + CSRF header\n  [PASS] features@400 import: Escape closes the dialog\n  [PASS] features@400 withdraw: asset select = native + token registry\n  [PASS] features@400 withdraw: asset select follows the chain (solana)\n  [PASS] features@400 withdraw: new allowlisted address shows 'allowed after <time>'\n  [PASS] features@400 withdraw: quote shows token transfer + fee asset\n  [PASS] features@400 withdraw: unavailable reason shown and submit disabled\n  [PASS] features@400 withdraw: submit enabled once available + acknowledged\n  [PASS] features@400 withdraw: HTTP 409 rendered as duplicate request\n  [PASS] features@400 withdraw: client request_key sent (uuid-like) with confirm + CSRF header\n  [PASS] features@400 wallets (withdraw modal open): no horizontal overflow\n  [PASS] features@400 withdraw: Escape closes the dialog\n  [PASS] features@400 features: no console errors (browser lines for the mocked 400/409 responses excluded)\n  [PASS] estop@400 health: failing readiness check reads 'fail' (text, not colour)\n  [PASS] estop@400 health: NOT READY (HTTP 503) shown\n  [PASS] estop@400 health: no horizontal overflow\n{\n  \"summary\": {\n    \"total\": 656,\n    \"passed\": 656,\n    \"failed\": 0,\n    \"by_width\": {\n      \"1280\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"1024\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"768\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"400\": {\n        \"pass\": 164,\n        \"fail\": 0\n      }\n    }\n  },\n  \"unmocked_requests\": [],\n  \"console_errors\": 8,\n  \"report\": \"/home/user/fedr/qa/screenshots/report.json\"\n}\n",
+      "details": {}
+    }
+  ]
+}

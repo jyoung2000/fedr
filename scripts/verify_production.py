@@ -39,7 +39,9 @@ class Step:
     details: dict = field(default_factory=dict)
 
 
-def run(cmd: list[str] | str, cwd: Path, timeout: int = 1800, env: dict | None = None) -> tuple[int, str]:
+def run(
+    cmd: list[str] | str, cwd: Path, timeout: int = 1800, env: dict | None = None
+) -> tuple[int, str]:
     shell = isinstance(cmd, str)
     try:
         p = subprocess.run(
@@ -90,7 +92,13 @@ def pytest_summary(out: str) -> dict:
     f = re.search(r"(\d+) failed", out)
     s = re.search(r"(\d+) skipped", out)
     e = re.search(r"(\d+) error", out)
-    skips = sorted(set(re.findall(r"SKIPPED \[\d+\] [^:]+:\d+: (EXTERNAL ENVIRONMENT REQUIRED: .+)", out)))
+    skips = sorted(
+        set(
+            re.findall(
+                r"SKIPPED \[\d+\] [^:]+:\d+: (EXTERNAL ENVIRONMENT REQUIRED: .+)", out
+            )
+        )
+    )
     return {
         "passed": int(m.group(1)) if m else 0,
         "failed": int(f.group(1)) if f else 0,
@@ -107,23 +115,45 @@ def main() -> int:
         action="store_true",
         help="build + start the compose stack and probe /health (needs a Docker daemon)",
     )
-    ap.add_argument("--ui", action="store_true", help="run the Playwright UI QA in mock mode")
+    ap.add_argument(
+        "--ui", action="store_true", help="run the Playwright UI QA in mock mode"
+    )
     ap.add_argument("--skip-npm", action="store_true")
     ap.add_argument("--skip-contracts", action="store_true")
-    ap.add_argument("--out", default=str(ROOT / "docs" / "PRODUCTION_VERIFICATION_REPORT.md"))
+    ap.add_argument(
+        "--out", default=str(ROOT / "docs" / "PRODUCTION_VERIFICATION_REPORT.md")
+    )
+    ap.add_argument(
+        "--docker-prebuilt",
+        action="store_true",
+        help="start the already-built app image (no build, no gateway) and probe /health; for hosts without registry access",
+    )
     a = ap.parse_args()
     steps: list[Step] = []
 
-    steps.append(step("lint (ruff check)", [PY, "-m", "ruff", "check", "fedr", "tests"], BACKEND))
+    steps.append(
+        step("lint (ruff check)", [PY, "-m", "ruff", "check", "fedr", "tests"], BACKEND)
+    )
     steps.append(
         step(
-            "format (ruff format --check)", [PY, "-m", "ruff", "format", "--check", "fedr", "tests"], BACKEND
+            "format (ruff format --check)",
+            [PY, "-m", "ruff", "format", "--check", "fedr", "tests"],
+            BACKEND,
         )
     )
 
     st = step(
         "unit + adversarial tests",
-        [PY, "-m", "pytest", "tests", "--ignore=tests/integration", "-q", "-p", "no:cacheprovider"],
+        [
+            PY,
+            "-m",
+            "pytest",
+            "tests",
+            "--ignore=tests/integration",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
         BACKEND,
         timeout=2400,
     )
@@ -132,15 +162,22 @@ def main() -> int:
 
     st = step(
         "integration tests (process-level + environment-gated)",
-        [PY, "-m", "pytest", "tests/integration", "-q", "-rs", "-p", "no:cacheprovider"],
+        [
+            PY,
+            "-m",
+            "pytest",
+            "tests/integration",
+            "-q",
+            "-rs",
+            "-p",
+            "no:cacheprovider",
+        ],
         BACKEND,
         timeout=2400,
     )
     st.details = pytest_summary(st.output_tail)
     if st.status == "PASS" and st.details["external_skips"]:
-        st.reason = (
-            f"{len(st.details['external_skips'])} check(s) need an external environment (listed below)"
-        )
+        st.reason = f"{len(st.details['external_skips'])} check(s) need an external environment (listed below)"
     steps.append(st)
 
     steps.append(
@@ -148,7 +185,9 @@ def main() -> int:
             "secret scan (tracked files)",
             [PY, str(ROOT / "scripts" / "secret_scan.py")],
             ROOT,
-            skip=None if (ROOT / "scripts" / "secret_scan.py").exists() else "scripts/secret_scan.py missing",
+            skip=None
+            if (ROOT / "scripts" / "secret_scan.py").exists()
+            else "scripts/secret_scan.py missing",
         )
     )
 
@@ -160,7 +199,9 @@ def main() -> int:
             if False
             else "pip-audit --progress-spinner off",
             BACKEND,
-            skip=None if pip_audit else "pip-audit not installed (pip install pip-audit)",
+            skip=None
+            if pip_audit
+            else "pip-audit not installed (pip install pip-audit)",
             timeout=900,
         )
     )
@@ -175,8 +216,24 @@ def main() -> int:
     )
     if fe_skip is None and not have_fe_modules:
         fe_skip = "frontend/node_modules missing (run npm ci in frontend/)"
-    steps.append(step("frontend typecheck (tsc)", "npx tsc --noEmit", FRONTEND, skip=fe_skip, timeout=900))
-    steps.append(step("frontend build (vite)", "npm run build", FRONTEND, skip=fe_skip, timeout=900))
+    steps.append(
+        step(
+            "frontend typecheck (tsc)",
+            "npx tsc --noEmit",
+            FRONTEND,
+            skip=fe_skip,
+            timeout=900,
+        )
+    )
+    steps.append(
+        step(
+            "frontend build (vite)",
+            "npm run build",
+            FRONTEND,
+            skip=fe_skip,
+            timeout=900,
+        )
+    )
     steps.append(
         step(
             "frontend dependency vulnerabilities (npm audit)",
@@ -195,7 +252,13 @@ def main() -> int:
     if c_skip is None and not (CONTRACTS / "node_modules").exists():
         c_skip = "contracts/node_modules missing (run npm ci in contracts/)"
     steps.append(
-        step("contract compile (solc-js 0.8.28)", "node compile.js", CONTRACTS, skip=c_skip, timeout=900)
+        step(
+            "contract compile (solc-js 0.8.28)",
+            "node compile.js",
+            CONTRACTS,
+            skip=c_skip,
+            timeout=900,
+        )
     )
     steps.append(
         step(
@@ -231,14 +294,21 @@ def main() -> int:
         "docker-compose.testnet.yml",
         "docker-compose.live.yml",
     ):
-        cmd = "docker compose -f docker-compose.yml" + (f" -f {overlay}" if overlay else "") + " config -q"
+        cmd = (
+            "docker compose -f docker-compose.yml"
+            + (f" -f {overlay}" if overlay else "")
+            + " config -q"
+        )
         steps.append(
             step(
                 f"compose config valid ({overlay or 'base'})",
                 cmd,
                 ROOT,
                 skip=d_skip,
-                env={"GATEWAY_PASSPHRASE": "verify-only", "FEDR_AUTH_TOKEN": "verify-only-token-0123456789"},
+                env={
+                    "GATEWAY_PASSPHRASE": "verify-only",
+                    "FEDR_AUTH_TOKEN": "verify-only-token-0123456789",
+                },
                 timeout=120,
             )
         )
@@ -255,7 +325,12 @@ def main() -> int:
                 )
             )
         else:
-            st = step("docker build (docker compose build)", "docker compose build", ROOT, timeout=3600)
+            st = step(
+                "docker build (docker compose build)",
+                "docker compose build",
+                ROOT,
+                timeout=3600,
+            )
             steps.append(st)
             if st.status == "PASS":
                 st2 = step(
@@ -266,6 +341,46 @@ def main() -> int:
                 )
                 steps.append(st2)
                 run("docker compose down", ROOT, timeout=300)
+    elif a.docker_prebuilt and not d_skip:
+        code, _ = run(
+            ["docker", "image", "inspect", "fedr/app:latest"], ROOT, timeout=60
+        )
+        if code != 0:
+            steps.append(
+                step(
+                    "docker up (prebuilt image) + /health",
+                    "docker compose up -d --no-deps --no-build app",
+                    ROOT,
+                    blocked="image fedr/app:latest not present",
+                )
+            )
+        else:
+            probe = (
+                "docker compose up -d --no-deps --no-build app && sleep 15 && "
+                "curl -fsS http://127.0.0.1:8935/health/live && curl -fsS http://127.0.0.1:8935/health/ready && "
+                'test "$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8935/api/trading/state)" = 401 && '
+                "docker compose ps"
+            )
+            st = step(
+                "docker up (prebuilt image) + /health/live + /health/ready + auth",
+                probe,
+                ROOT,
+                timeout=600,
+                env={
+                    "GATEWAY_PASSPHRASE": os.environ.get(
+                        "GATEWAY_PASSPHRASE", "verify-only"
+                    ),
+                    "FEDR_AUTH_TOKEN": os.environ.get(
+                        "FEDR_AUTH_TOKEN", "verify-only-token-0123456789"
+                    ),
+                },
+            )
+            st.reason = (
+                (st.reason + "; " if st.reason else "")
+                + "gateway service not started (image unavailable here); build not exercised"
+            )
+            steps.append(st)
+            run("docker compose down", ROOT, timeout=300)
     else:
         steps.append(
             step(
@@ -352,7 +467,11 @@ def main() -> int:
     out.write_text("\n".join(lines))
     out.with_suffix(".json").write_text(
         json.dumps(
-            {"production_ready": production_ready, "verdict": verdict, "steps": [asdict(s) for s in steps]},
+            {
+                "production_ready": production_ready,
+                "verdict": verdict,
+                "steps": [asdict(s) for s in steps],
+            },
             indent=2,
         )
     )

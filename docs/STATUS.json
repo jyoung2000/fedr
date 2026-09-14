@@ -2,10 +2,10 @@
   "name": "FEDR",
   "version": "0.2.0-rc1",
   "generated": "2026-09-14",
-  "git": "b456837",
+  "git": "d8a48c8",
   "port": 8935,
   "production_ready": false,
-  "reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, RT-06, RT-07, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
+  "reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
   "safe_modes_verified": [
     "simulation",
     "shadow (offline)"
@@ -18,9 +18,9 @@
     "live"
   ],
   "counts": {
-    "IMPLEMENTED + VERIFIED": 43,
+    "IMPLEMENTED + VERIFIED": 45,
     "BLOCKED BY EXTERNAL DEPENDENCY": 8,
-    "IMPLEMENTED + PARTIALLY VERIFIED": 16,
+    "IMPLEMENTED + PARTIALLY VERIFIED": 14,
     "IMPLEMENTED + UNVERIFIED": 2,
     "MUST BLOCK": 1
   },
@@ -29,8 +29,6 @@
     "RT-03",
     "RT-04",
     "RT-05",
-    "RT-06",
-    "RT-07",
     "MD-03",
     "CX-01",
     "CX-02",

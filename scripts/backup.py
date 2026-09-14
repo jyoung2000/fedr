@@ -94,7 +94,9 @@ def create(data_dir: Path, out: Path | None, include_secrets: bool) -> Path:
         "tool": "fedr/scripts/backup.py",
         "includes_secrets": include_secrets,
         "schema_version": schema_version,
-        "files": {rel: {"sha256": sha256(b), "bytes": len(b)} for rel, b in files.items()},
+        "files": {
+            rel: {"sha256": sha256(b), "bytes": len(b)} for rel, b in files.items()
+        },
     }
     with tarfile.open(out, "w:gz") as tar:
         for rel, b in files.items():
@@ -112,12 +114,16 @@ def create(data_dir: Path, out: Path | None, include_secrets: bool) -> Path:
     os.chmod(out, 0o600)
     print(f"backup written: {out} ({len(files)} files, {out.stat().st_size} bytes)")
     if not include_secrets:
-        print("NOTE: config/master.key and config/ui-token were NOT included (use --include-secrets).")
+        print(
+            "NOTE: config/master.key and config/ui-token were NOT included (use --include-secrets)."
+        )
         print(
             "      Keep the master key separately: without it encrypted credentials and wallet keys are unusable."
         )
     else:
-        print("WARNING: the archive contains the master key and UI token - store it encrypted and offline.")
+        print(
+            "WARNING: the archive contains the master key and UI token - store it encrypted and offline."
+        )
     return out
 
 
@@ -151,7 +157,9 @@ def verify(archive: Path) -> int:
             problems.append(f"unlisted file: {rel}")
     has_secrets = any(rel in SECRET_FILES for rel in files)
     if has_secrets != bool(manifest.get("includes_secrets")):
-        problems.append("manifest includes_secrets flag does not match the archive contents")
+        problems.append(
+            "manifest includes_secrets flag does not match the archive contents"
+        )
     # plaintext-secret scan: wallet keys and exchange credentials must be ciphertext in the DB
     if DB_REL in files:
         with tempfile.TemporaryDirectory() as td:
@@ -159,15 +167,21 @@ def verify(archive: Path) -> int:
             p.write_bytes(files[DB_REL])
             con = sqlite3.connect(p)
             try:
-                for (key_enc,) in con.execute("SELECT key_enc FROM wallets WHERE key_enc IS NOT NULL"):
+                for (key_enc,) in con.execute(
+                    "SELECT key_enc FROM wallets WHERE key_enc IS NOT NULL"
+                ):
                     if HEX_PRIVATE_KEY.match(str(key_enc).strip()):
-                        problems.append("wallets.key_enc looks like a PLAINTEXT private key")
+                        problems.append(
+                            "wallets.key_enc looks like a PLAINTEXT private key"
+                        )
                 for (cred,) in con.execute(
                     "SELECT credentials_enc FROM exchange_accounts WHERE credentials_enc IS NOT NULL"
                 ):
                     try:
                         json.loads(cred)
-                        problems.append("exchange_accounts.credentials_enc is PLAINTEXT JSON")
+                        problems.append(
+                            "exchange_accounts.credentials_enc is PLAINTEXT JSON"
+                        )
                     except Exception:
                         pass
             except sqlite3.Error as exc:
@@ -175,7 +189,9 @@ def verify(archive: Path) -> int:
             finally:
                 con.close()
     for rel, b in files.items():
-        if rel.startswith("wallets/") and (b"private_key" in b or b"privateKey" in b or b"mnemonic" in b):
+        if rel.startswith("wallets/") and (
+            b"private_key" in b or b"privateKey" in b or b"mnemonic" in b
+        ):
             problems.append(f"{rel} contains a plaintext key field")
     print(f"archive: {archive}")
     print(
@@ -192,7 +208,9 @@ def restore(archive: Path, data_dir: Path, force: bool) -> int:
         sys.exit("refusing to restore: archive failed verification")
     manifest, files = _read_archive(archive)
     data_dir = data_dir.resolve()
-    existing = [p for p in data_dir.rglob("*") if p.is_file()] if data_dir.exists() else []
+    existing = (
+        [p for p in data_dir.rglob("*") if p.is_file()] if data_dir.exists() else []
+    )
     if existing and not force:
         sys.exit(
             f"{data_dir} is not empty ({len(existing)} files); pass --force to overwrite (the current database is replaced)"
@@ -206,7 +224,16 @@ def restore(archive: Path, data_dir: Path, force: bool) -> int:
         p = data_dir / stale
         if p.exists():
             p.unlink()
-    for sub in ("database", "config", "wallets", "strategies", "logs", "backups", "market-data", "reports"):
+    for sub in (
+        "database",
+        "config",
+        "wallets",
+        "strategies",
+        "logs",
+        "backups",
+        "market-data",
+        "reports",
+    ):
         (data_dir / sub).mkdir(parents=True, exist_ok=True)
     print(f"restored {len(files)} files into {data_dir}")
     if not (data_dir / "config" / "master.key").exists():
@@ -220,7 +247,9 @@ def restore(archive: Path, data_dir: Path, force: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("create")
     c.add_argument("--data-dir", default=os.environ.get("FEDR_DATA_DIR", "/data"))
