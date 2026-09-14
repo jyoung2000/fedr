@@ -54,6 +54,7 @@ CARRY_STRATEGIES = (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS)
 log = get_logger("app")
 
 LIVE_CONFIRMATION_PHRASE = "ACTIVATE LIVE TRADING"
+FULL_LIVE_CONFIRMATION_PHRASE = "ACTIVATE FULL LIVE TRADING"
 
 
 class Metrics:
@@ -873,6 +874,8 @@ class FedrApp:
         self.settings.live.activated_at = datetime.now(UTC).isoformat()
         self.settings.live.activated_by = actor
         self.settings.live.confirmation_phrase_hash = hash_phrase(confirmation)
+        self.settings.live.stage = "small_test"  # live ALWAYS starts as the small live test
+        self.settings.live.full_activated_at = None
         self.settings.general.mode = TradingMode.LIVE
         self.settings.general.shadow_mode = (
             True  # live starts in shadow mode: one more explicit step to submit orders
@@ -890,6 +893,40 @@ class FedrApp:
             )
         await self.rebuild_connectors()
         return checklist.as_dict()
+
+    async def activate_full_live(
+        self, confirmation: str, acknowledge_no_small_test: bool = False, actor: str = "user"
+    ) -> dict:
+        """Promote LIVE from the small-test stage to full live. Separate explicit opt-in:
+        its own phrase, and normally at least one FILLED small-live-test trade on record."""
+        if confirmation.strip() != FULL_LIVE_CONFIRMATION_PHRASE:
+            raise ValueError(f"type the exact confirmation phrase: {FULL_LIVE_CONFIRMATION_PHRASE}")
+        if self.mode is not TradingMode.LIVE or not self.settings.live.activated:
+            raise ValueError("live is not active; activate the small live test first")
+        if self.settings.live.stage == "full":
+            return {"stage": "full", "note": "already in full live"}
+        filled = 0
+        if self.repo:
+            trades = await self.repo.list_trades(TradingMode.LIVE, limit=200)
+            filled = sum(1 for t in trades if t.status in ("filled", "hedged"))
+        if filled == 0 and not acknowledge_no_small_test:
+            raise ValueError(
+                "no filled small-live-test trade on record. Run at least one tiny live trade and check "
+                "its reconciliation first, or pass acknowledge_no_small_test=true to skip explicitly."
+            )
+        self.settings.live.stage = "full"
+        self.settings.live.full_activated_at = datetime.now(UTC).isoformat()
+        self.ctx.settings = self.settings
+        if self.repo:
+            await self.repo.save_settings_doc(self.settings.model_dump(mode="json"), "app")
+            await self.repo.audit(
+                TradingMode.LIVE,
+                "live_activation",
+                f"FULL LIVE ACTIVATED (small-test filled trades on record: {filled})",
+                {"acknowledge_no_small_test": acknowledge_no_small_test, "filled_small_test_trades": filled},
+                actor=actor,
+            )
+        return {"stage": "full", "filled_small_test_trades": filled}
 
     async def deactivate_live(self, actor: str = "user") -> None:
         await self.update_settings(

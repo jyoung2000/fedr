@@ -231,3 +231,104 @@ async def live_readiness(app) -> Checklist:
     cl.items.append(CheckItem("no_estop", "Emergency stop not active", not ctx.emergency_stop, ""))
     _ = TradingMode
     return cl
+
+
+# ---------------------------------------------------------------------------- per-strategy readiness
+# Independent readiness per strategy family (section: a disabled optional strategy never blocks an
+# otherwise-safe one, but enabling a strategy requires that strategy's own prerequisites).
+# `ready` is TECHNICAL readiness in the current installation; `live_verified` states whether real-venue
+# execution evidence exists for this deployment - it starts false and only an operator's verification
+# run flips it (see docs/LIVE_VERIFICATION_RUNBOOK.md). FEDR never sets it optimistically.
+
+
+def strategy_readiness(app) -> dict:
+    ctx = app.ctx
+    s = ctx.settings
+    cex = [c for c in ctx.connectors.values() if c.kind is VenueKind.CEX and c.connected]
+    perp = [c for c in ctx.connectors.values() if c.kind is VenueKind.PERP and c.connected]
+    dex = [c for c in ctx.connectors.values() if c.kind is VenueKind.DEX and c.connected]
+    healthy = {n for n in ctx.connectors if ctx.venue_health(n) is VenueHealth.HEALTHY}
+    books = len(ctx.hub.books) > 0
+    gw = bool(app.gateway_ok) or ctx.settings.general.mode is TradingMode.SIMULATION
+
+    def entry(key, enabled, checks, verification):
+        failed = [d for ok, d in checks if not ok]
+        return {
+            "key": key,
+            "enabled": enabled,
+            "ready": enabled and not failed,
+            "blockers": ([] if enabled else ["strategy disabled in Settings → Strategies"]) + failed,
+            "live_verified": False,
+            "verification": verification,
+        }
+
+    env = app.env
+    fl_chains = [
+        c
+        for c in ("ethereum", "arbitrum", "base", "optimism", "polygon")
+        if getattr(env, f"flashloan_contract_{c}", None)
+    ]
+    out = {
+        "CEX_ARBITRAGE_READY": entry(
+            "cex_cex",
+            s.strategies.cex_cex,
+            [
+                (len(cex) >= 2, f"needs ≥2 connected CEX venues (have {len(cex)})"),
+                (len([c for c in cex if c.name in healthy]) >= 2, "needs ≥2 HEALTHY CEX venues"),
+                (books, "no live order books"),
+            ],
+            "offline + paper verified; sandbox/live order round-trip outstanding (CX-02)",
+        ),
+        "CEX_DEX_READY": entry(
+            "cex_dex",
+            s.strategies.cex_dex,
+            [
+                (len(cex) >= 1, "needs a connected CEX venue"),
+                (len(dex) >= 1, "needs a connected DEX venue"),
+                (gw, "Gateway unreachable"),
+                (books, "no live order books"),
+            ],
+            "paper verified with a synthetic DEX; Gateway execution outstanding (CX-03)",
+        ),
+        "DEX_ARB_READY": entry(
+            "dex_dex",
+            s.strategies.dex_dex,
+            [
+                (len(dex) >= 2, f"needs ≥2 connected DEX venues (have {len(dex)})"),
+                (gw, "Gateway unreachable"),
+                (books, "no live order books"),
+            ],
+            "paper verified with two synthetic DEX venues; on-chain execution outstanding",
+        ),
+        "FUNDING_READY": entry(
+            "funding",
+            s.strategies.funding or s.strategies.spot_perp,
+            [
+                (len(perp) >= 1, "needs a connected perp venue with funding data"),
+                (len(cex) >= 1 or len(dex) >= 1, "needs a spot venue for the hedge leg"),
+                (books, "no live order books"),
+            ],
+            "paper lifecycle verified (tests/test_positions.py); real derivatives venue outstanding (ST-04)",
+        ),
+        "BASIS_READY": entry(
+            "basis",
+            s.strategies.basis or s.strategies.spot_perp,
+            [
+                (len(perp) >= 1, "needs a connected perp/futures venue"),
+                (len(cex) >= 1, "needs a spot venue"),
+                (books, "no live order books"),
+            ],
+            "paper lifecycle verified; real venue margin/settlement outstanding (ST-04)",
+        ),
+        "FLASH_LOAN_READY": entry(
+            "flash_loan",
+            s.strategies.flash_loan and s.flash_loan.enabled,
+            [
+                (bool(fl_chains), "no flash-loan contract address configured"),
+                (len(dex) >= 2, "needs ≥2 DEX venues on one chain"),
+                (gw, "Gateway unreachable"),
+            ],
+            "contract compiled + 12 EVM tests; NOT audited, no fork tests - MUST BLOCK on mainnet (ST-05)",
+        ),
+    }
+    return out

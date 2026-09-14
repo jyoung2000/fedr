@@ -63,6 +63,10 @@ the readiness checklist fails if withdrawals are enabled; elsewhere the UI asks 
 3. Typing the exact phrase `ACTIVATE LIVE TRADING` in the UI.
 4. Live starts in **shadow mode with auto-execute off**: a further explicit toggle is needed before any
    order is submitted.
+4b. Live also starts in the **SMALL LIVE TEST** stage: the Risk Engine blocks everything except one
+   selected strategy on one explicitly selected route, hard-capped at $25 notional (a code constant, not a
+   setting), flash loans excluded. Full live needs the separate phrase `ACTIVATE FULL LIVE TRADING` and
+   normally a filled, reconciled small-test trade on record.
 5. A `LIVE` mode found in the settings document without a valid activation is reverted to PAPER on boot.
 
 ## What is *not* protected

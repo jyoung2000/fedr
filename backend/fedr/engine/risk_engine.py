@@ -6,9 +6,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from fedr.config.schema import AppSettings
-from fedr.core.enums import Chain, Strategy, VenueHealth, VenueKind
+from fedr.core.enums import Chain, Strategy, TradingMode, VenueHealth, VenueKind
 from fedr.core.models import ExecutionQuote, RiskAssessment
 from fedr.core.money import ZERO, D, fmt_money, pct
+
+# Hard-coded ceiling for the SMALL LIVE TEST stage. Intentionally a constant, not a setting:
+# the first live trades are for verifying execution + accounting, not for making money.
+SMALL_LIVE_TEST_MAX_NOTIONAL_USD = Decimal("25")
 
 
 @dataclass(slots=True)
@@ -53,6 +57,32 @@ class RiskEngine:
         reasons: list[str] = []
         factors: dict = {}
         score = 0
+
+        # --- small live test stage (LIVE only) --------------------------------------------
+        # Live trading starts in a SMALL LIVE TEST: exactly one strategy, one route, and a
+        # hard-coded tiny notional. Everything else is blocked until FULL live is explicitly
+        # activated with its own confirmation phrase.
+        live = self.settings.live
+        if self.settings.general.mode is TradingMode.LIVE and live.stage != "full":
+            if flash_loan_usd is not None or strategy is Strategy.FLASH_LOAN:
+                reasons.append("flash loans are not available during the small live test")
+            if strategy.value != live.small_test_strategy:
+                reasons.append(
+                    f"small live test allows only the selected strategy ({live.small_test_strategy}); "
+                    f"this is {strategy.value}"
+                )
+            route = f"{buy.venue}->{sell.venue}"
+            if live.small_test_route is None:
+                reasons.append("select the small-live-test route in Settings → Live before any live order")
+            elif route != live.small_test_route:
+                reasons.append(
+                    f"small live test allows only the selected route ({live.small_test_route}); this is {route}"
+                )
+            if notional_usd > SMALL_LIVE_TEST_MAX_NOTIONAL_USD:
+                reasons.append(
+                    f"small live test caps notional at {fmt_money(SMALL_LIVE_TEST_MAX_NOTIONAL_USD)} "
+                    f"(hard-coded); requested {fmt_money(notional_usd)}"
+                )
 
         # --- hard limits ----------------------------------------------------------------
         if flash_loan_usd is None and notional_usd > t.max_trade_size_usd:
@@ -206,4 +236,4 @@ class RiskEngine:
         }
 
 
-__all__ = ["Chain", "PortfolioState", "RiskEngine"]
+__all__ = ["SMALL_LIVE_TEST_MAX_NOTIONAL_USD", "Chain", "PortfolioState", "RiskEngine"]

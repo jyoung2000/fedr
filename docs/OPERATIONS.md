@@ -7,7 +7,7 @@
 | SIMULATION | synthetic (deterministic seed) or replayed JSONL | simulated | paper executor | exercises the whole pipeline offline; clearly labelled |
 | PAPER (default) | real (public ccxt endpoints + Gateway quotes) | simulated, editable | paper executor (latency, drift, stress, partial fills, gas) | same Profit Guard / Risk Engine as live |
 | TESTNET | exchange sandboxes, Solana devnet, Sepolia | real test assets | real orders | only exchanges with a ccxt sandbox; separate credential scope |
-| LIVE | real | real | real | requires env gate + checklist + activation phrase; starts in shadow mode |
+| LIVE | real | real | real | env gate + checklist + phrase; starts in shadow AND in the SMALL LIVE TEST stage (one strategy, one route, hard $25 cap); full live is a second phrase (`ACTIVATE FULL LIVE TRADING`) normally requiring a filled small-test trade |
 
 Shadow mode is a toggle available in every mode: evaluate, never submit, record `would_trade`, route, size,
 predicted profit, worst case, estimated costs, reason, and a re-priced hypothetical profit after a delay.

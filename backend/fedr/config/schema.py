@@ -250,6 +250,29 @@ class LiveActivationState(BaseModel):
     confirmation_phrase_hash: str | None = None
     paper_completed: bool = False
     shadow_reviewed: bool = False
+    # Live is entered in two explicit stages. Activation always lands in the SMALL LIVE TEST:
+    # one strategy, one route, and a hard-coded notional cap (SMALL_LIVE_TEST_MAX_NOTIONAL_USD in
+    # fedr/engine/risk_engine.py - deliberately NOT a setting). FULL live requires a second explicit
+    # activation with its own phrase.
+    stage: str = "small_test"  # "small_test" | "full"
+    small_test_strategy: str = "cex_cex"
+    small_test_route: str | None = None  # "buy_venue->sell_venue"; must be chosen before any live order
+    full_activated_at: str | None = None
+
+    @field_validator("stage")
+    @classmethod
+    def _stage(cls, v: str) -> str:
+        if v not in ("small_test", "full"):
+            raise ValueError("stage must be small_test or full")
+        return v
+
+    @field_validator("small_test_strategy")
+    @classmethod
+    def _sts(cls, v: str) -> str:
+        allowed = {"cex_cex", "cex_dex", "dex_dex", "spot_perp", "funding", "basis"}
+        if v not in allowed:
+            raise ValueError(f"small_test_strategy must be one of {sorted(allowed)} (flash_loan is excluded)")
+        return v
 
 
 class AppSettings(BaseModel):

@@ -61,7 +61,9 @@ class Harness:
         seed: int = 1,
         failure_prob: str = "0",
         partial_prob: str = "0",
+        extra_dex: bool = False,  # add a second Solana DEX ("raydium", priced 2% below) for DEX↔DEX routes
     ):
+        self.extra_dex = extra_dex
         self.settings = default_settings("paper")
         self.settings.general.mode = TradingMode.SIMULATION
         self.settings.paper.latency_ms = 0
@@ -103,6 +105,19 @@ class Harness:
                 pool_liquidity_usd=5_000_000,
             ),
         ]
+        if extra_dex:
+            venues.append(
+                VenueProfile(
+                    "raydium",
+                    "dex",
+                    offset_bps=-200.0,
+                    vol_bps=0.0,
+                    dislocation_prob=0.0,
+                    chain=Chain.SOLANA,
+                    pool_fee_pct=D("0.25"),
+                    pool_liquidity_usd=5_000_000,
+                )
+            )
         self.market = SyntheticMarket(
             PAIRS,
             venues,
@@ -135,6 +150,8 @@ class Harness:
         self.ctx.connectors["kraken"] = SyntheticCexVenue(self.market, "kraken", PAIRS, D("0.16"))
         self.ctx.connectors["coinbase"] = SyntheticCexVenue(self.market, "coinbase", PAIRS, D("0.16"))
         self.ctx.connectors["jupiter"] = SyntheticDexVenue(self.market, "jupiter", PAIRS, Chain.SOLANA)
+        if self.extra_dex:
+            self.ctx.connectors["raydium"] = SyntheticDexVenue(self.market, "raydium", PAIRS, Chain.SOLANA)
         for c in self.ctx.connectors.values():
             await c.connect()
         self.ledger = PaperLedger()

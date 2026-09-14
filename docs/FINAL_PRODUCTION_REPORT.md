@@ -1,6 +1,6 @@
-# FEDR — final production verification report (phase 2)
+# FEDR — final production verification report
 
-Date: 2026-09-14 · Version 0.2.0-rc1 · Branch `claude/crypto-arbitrage-platform-mm9ytb` · Port **8935**
+Date: 2026-09-14 · Version 0.2.0 · Branch `claude/crypto-arbitrage-platform-mm9ytb` · Port **8935**
 
 **Verdict: NOT production ready.** `docs/STATUS.json` → `production_ready: false`. Every capability that can
 be verified without a live venue, RPC, Gateway or Docker registry has been verified with automated evidence;
@@ -87,11 +87,37 @@ states (656 checks, 0 failures, `docs/UI_QA_REPORT.md`), keyboard pass included.
 tests on real bytecode (profit, min-profit revert, cannot-repay, min-out, deadline, auth, allow-lists,
 callback origin, pause, reentrancy, rescue, ownership, gas). Not audited, no fork tests, no static analysis.
 
+## 4b. Phase-3 additions (live release hardening)
+
+**Small live test stage.** Live activation now always lands in a SMALL LIVE TEST: the Risk Engine (so no
+execution path can bypass it) blocks everything except one selected strategy on one explicitly selected
+route, hard-caps notional at $25 (a code constant, deliberately not a setting) and excludes flash loans.
+Full live is a second explicit opt-in with its own phrase (`ACTIVATE FULL LIVE TRADING`) that normally
+requires a filled small-test trade on record; skipping that requires a further explicit acknowledgement,
+and everything is audited. Evidence: `backend/tests/test_small_live_test.py` (8 tests).
+
+**Per-strategy readiness.** `GET /api/system/readiness/strategies` exposes CEX_ARBITRAGE_READY,
+CEX_DEX_READY, DEX_ARB_READY, FUNDING_READY, BASIS_READY and FLASH_LOAN_READY independently, each with its
+blockers and a `live_verified` field that starts false and is never set optimistically by the software.
+A disabled optional strategy no longer obscures the readiness of an enabled one.
+
+**DEX↔DEX verified in paper.** A second synthetic Solana DEX joins the harness; `tests/test_dex_dex.py`
+verifies same-chain pairing, gas and dual pool-fee attribution, paper execution with a conserved chain
+ledger, the gas-spike block and the disable switch. Matrix row ST-03 is now IMPLEMENTED + VERIFIED
+(paper); on-chain execution stays blocked with the rest of the DEX stack.
+
+**Classification colors and STATUS.json.** Every matrix row now also carries GREEN / YELLOW / ORANGE /
+RED (ORANGE = external verification required, including everything MUST BLOCK gates). `docs/STATUS.json`
+follows the release-status schema with one evidence-backed color per capability; strategy statuses
+deliberately include their venue-execution dependency so a paper-verified engine never reads as
+live-capable. `docs/LIVE_VERIFICATION_RUNBOOK.md` gives the 18-step operator sequence with exact commands
+and expected evidence per step.
+
 ## 5. Test inventory
 
 | Suite | Count | How to run |
 |---|---:|---|
-| unit + adversarial (backend/tests, excluding integration) | see `docs/PRODUCTION_VERIFICATION_REPORT.md` | `cd backend && pytest tests --ignore=tests/integration -q` |
+| unit + adversarial (backend/tests, excluding integration) | 192 | `cd backend && pytest tests --ignore=tests/integration -q` |
 | process-level integration (real HTTP, SQLite, restarts) | 12 | `cd backend && pytest tests/integration -q -rs` |
 | environment-gated external checks | 5 (skip with `EXTERNAL ENVIRONMENT REQUIRED`) | set `FEDR_IT_*` variables, same command |
 | contract EVM tests | 12 | `pytest tests/test_contract_evm.py` (after `cd contracts && npm ci && node compile.js`) |
@@ -116,6 +142,21 @@ config, UI QA) is `scripts/verify_production.py --ui`; its output is `docs/PRODU
 7. **DEX↔DEX** routes have no test; external browser-wallet funding was not exercised.
 8. **UI QA** ran against mocks for the new states; the live-backend run predates this phase.
 
+## 6b. Final questions (answered explicitly)
+
+| Question | Answer |
+|---|---|
+| Can FEDR run live CEX↔CEX arbitrage? | **EXTERNAL VERIFICATION REQUIRED** — engine + guards verified in paper (ST-01 GREEN); no exchange order has ever been placed (CX-02 ORANGE). Runbook steps 6–8, 12–14. |
+| Can FEDR run live CEX↔DEX arbitrage? | **EXTERNAL VERIFICATION REQUIRED** — paper-verified against a synthetic DEX; Gateway never ran here (CX-03/RT-05 ORANGE). Runbook steps 9–10. |
+| Can FEDR run live DEX↔DEX arbitrage? | **EXTERNAL VERIFICATION REQUIRED** — newly paper-verified (ST-03 GREEN); on-chain execution unverified. Default OFF. |
+| Can FEDR run funding/basis live? | **EXTERNAL VERIFICATION REQUIRED** — full paper lifecycle verified (ST-04 GREEN); no real derivatives venue exercised. Default OFF. |
+| Can FEDR run flash-loan arbitrage live? | **NO** — MUST BLOCK until an independent audit and fork tests exist, then external verification. Default OFF. |
+| Is Docker verified? | **YES, with a caveat** — runtime, hardening, persistence and network isolation verified against the built image; the official base images could not be pulled here (registry blocked), so build reproducibility needs one `docker compose build` on a normal host (runbook step 2). |
+| Are wallets verified? | **YES for custody** (encryption at rest, backup → restore into a fresh install, address verification, allowlists, idempotent withdrawals — all tested); **NO for on-chain movement** (no deposit or withdrawal ever touched a real network). |
+| Are real market data feeds verified? | **NO** — the quality gate and every consumer are verified offline; no egress here. One command closes it: runbook step 6. |
+| Has actual trade execution been verified? | **NO** — paper and process-level only. |
+| Has actual net profit accounting been verified? | **NO for live** — the accounting identity (ledger delta = realized net, estimated vs actual attribution) is verified in paper; live evidence requires the small live test (runbook steps 14–16). |
+
 ## 7. Exact next steps for the operator
 
 1. `docker compose build && docker compose up -d` on a host with registry access; confirm
@@ -123,7 +164,7 @@ config, UI QA) is `scripts/verify_production.py --ui`; its output is `docs/PRODU
 2. PAPER with real data (`FEDR_IT_NETWORK=1`), then an exchange sandbox round-trip
    (`FEDR_IT_CCXT_*` + `FEDR_IT_CCXT_SANDBOX=1`), then Gateway (`FEDR_IT_GATEWAY_URL`) and testnet
    (`FEDR_IT_TESTNET=1`). Update `docs/CONNECTORS.md` from the test output only.
-3. Run SHADOW for days and compare predicted vs hypothetical P&L in History before enabling auto-execute.
+3. Run SHADOW for days and compare predicted vs hypothetical P&L in History before enabling auto-execute; then the SMALL LIVE TEST (one strategy, one route, $25 hard cap) before any full-live promotion. Follow `docs/LIVE_VERIFICATION_RUNBOOK.md` step by step.
 4. Commission a contract audit and fork tests before any flash-loan deployment.
 5. Re-run `scripts/verify_production.py --docker --ui` and `scripts/audit_matrix.py`; `production_ready`
    flips only when every critical row is VERIFIED on your deployment.

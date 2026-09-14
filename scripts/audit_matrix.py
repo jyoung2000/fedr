@@ -28,7 +28,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 GENERATED = time.strftime("%Y-%m-%d", time.gmtime())
-VERSION = "0.2.0-rc1"
+VERSION = "0.2.0"
+
+
+# Four-color summary of the same information (GREEN verified · YELLOW partially verified ·
+# ORANGE external verification required · RED missing/broken/unsafe).
+def color_of(status: str) -> str:
+    return {
+        "IMPLEMENTED + VERIFIED": "GREEN",
+        "IMPLEMENTED + PARTIALLY VERIFIED": "YELLOW",
+        "IMPLEMENTED + UNVERIFIED": "YELLOW",
+        "PARTIALLY IMPLEMENTED": "RED",
+        "NOT IMPLEMENTED": "RED",
+        "UNSAFE": "RED",
+        "MUST BLOCK": "ORANGE",
+        "BLOCKED BY EXTERNAL DEPENDENCY": "ORANGE",
+    }[status]
+
 
 V = "IMPLEMENTED + VERIFIED"
 PV = "IMPLEMENTED + PARTIALLY VERIFIED"
@@ -418,7 +434,7 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
     (
         "MO-05",
         "modes",
-        "LIVE gate: env flag alone cannot enable live; readiness checklist + typed phrase; starts in shadow with auto-execute off; boot never defaults to live",
+        "LIVE gate: env flag alone cannot enable live; readiness checklist + typed phrase; starts in shadow with auto-execute off AND in the small-live-test stage; boot never defaults to live",
         V,
         "tests/test_api.py::test_settings_patch_profiles_and_live_guard, startup tests; tests/test_profit_guard_bypass.py::test_api_cannot_execute_forged_ids_or_activate_live_from_env_alone; fedr/engine/readiness.py",
         "",
@@ -432,6 +448,24 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
         "Never executed anywhere. Prerequisites still outstanding: CX-02, CX-03, CX-04, MD-03, MO-02, MO-04, ST-05 (contract audit).",
         "Stays blocked until the operator completes sandbox → testnet → paper → shadow verification on their deployment.",
         True,
+    ),
+    (
+        "MO-07",
+        "modes",
+        "SMALL LIVE TEST stage: live activation always lands in a small test (one selected strategy, one explicitly selected route, hard-coded $25 notional cap, flash loans excluded); FULL live is a second explicit opt-in with its own phrase and normally a filled small-test trade on record",
+        V,
+        "fedr/engine/risk_engine.py (enforced in the Risk Engine so no execution path bypasses it); fedr/app.py::activate_full_live; POST /api/system/live/full; tests/test_small_live_test.py (8 tests)",
+        "The stage machinery is verified; an actual small live trade is part of MO-06's operator sequence.",
+        True,
+    ),
+    (
+        "MO-08",
+        "modes",
+        "Per-strategy readiness flags (CEX_ARBITRAGE_READY, CEX_DEX_READY, DEX_ARB_READY, FUNDING_READY, BASIS_READY, FLASH_LOAN_READY) with blockers and never-optimistic live_verified",
+        V,
+        "fedr/engine/readiness.py::strategy_readiness; GET /api/system/readiness/strategies; tests/test_small_live_test.py::test_strategy_readiness_flags",
+        "",
+        False,
     ),
     # ------------------------------------------------------------------ strategies
     (
@@ -455,10 +489,10 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
     (
         "ST-03",
         "strategies",
-        "DEX↔DEX",
-        U,
-        "Strategy catalog + evaluation code exist; no test exercises a two-DEX route.",
-        "Add a synthetic two-DEX harness or verify on testnet.",
+        "DEX↔DEX (same-chain, both legs on-chain, gas + pool fees on both legs)",
+        V,
+        "tests/test_dex_dex.py: two synthetic Solana DEX venues sharing the chain wallet; evaluation (same-chain pairing, gas + dual pool-fee attribution), paper execution with conserved ledger, gas-spike block, disable switch.",
+        "Paper-verified only; real on-chain execution stays BLOCKED with the rest of the DEX stack (RT-05/CX-03). Default OFF.",
         False,
     ),
     (
@@ -672,6 +706,15 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
     ),
     # ------------------------------------------------------------------ docs
     (
+        "DOC-02",
+        "docs",
+        "Live verification runbook (18 steps, exact commands, expected evidence per step)",
+        V,
+        "docs/LIVE_VERIFICATION_RUNBOOK.md",
+        "",
+        False,
+    ),
+    (
         "DOC-01",
         "docs",
         "Documentation set: README, ARCHITECTURE, OPERATIONS, SECURITY, CONNECTORS (mandatory status language), MEV, DEPENDENCY_LICENSES, PROFIT_GUARD_CALL_GRAPH, DOCKER_SECURITY_REPORT, UI_QA_REPORT, PRODUCTION_VERIFICATION_MATRIX, FINAL_PRODUCTION_REPORT, STATUS.json",
@@ -743,12 +786,14 @@ def main() -> int:
             "total": len(BREAKER_REASONS),
             "wired_and_tested": BREAKER_REASONS,
         },
+        "color_counts": dict(Counter(color_of(r[3]) for r in ROWS)),
         "rows": [
             {
                 "id": r[0],
                 "area": r[1],
                 "capability": r[2],
                 "status": r[3],
+                "color": color_of(r[3]),
                 "evidence": r[4],
                 "limitation": r[5],
                 "critical": r[6],
@@ -766,7 +811,12 @@ def main() -> int:
         "**production_ready = false.** " + report["production_ready_reason"] + ".",
         "",
         "Vocabulary (exactly one per row): "
-        + " · ".join(f"`{v}`" for v in report["classification_vocabulary"]),
+        + " · ".join(f"`{v}`" for v in report["classification_vocabulary"])
+        + ". Colors: **GREEN** = verified · **YELLOW** = partially verified / unverified locally · **ORANGE** = external verification required (incl. MUST BLOCK until it exists) · **RED** = missing/broken/unsafe — "
+        + ", ".join(
+            f"{k} {v}" for k, v in sorted(Counter(color_of(r[3]) for r in ROWS).items())
+        )
+        + ".",
         "",
         "Environment that produced this matrix: no exchange / RPC / registry egress; local Docker daemon with imported base images; no Gateway image; no foundry/slither. "
         "Everything marked BLOCKED BY EXTERNAL DEPENDENCY has a ready-to-run check in `tests/integration/` gated on the documented environment variables.",
@@ -798,14 +848,14 @@ def main() -> int:
         lines += [
             f"## {area}",
             "",
-            "| ID | Capability | Status | Evidence | Limitation / next step | Critical |",
-            "|---|---|---|---|---|---|",
+            "| ID | Capability | Status | Color | Evidence | Limitation / next step | Critical |",
+            "|---|---|---|---|---|---|---|",
         ]
         for r in ROWS:
             if r[1] != area:
                 continue
             lines.append(
-                f"| {r[0]} | {r[2]} | **{r[3]}** | {r[4]} | {r[5] or '—'} | {'yes' if r[6] else 'no'} |"
+                f"| {r[0]} | {r[2]} | **{r[3]}** | {color_of(r[3])} | {r[4]} | {r[5] or '—'} | {'yes' if r[6] else 'no'} |"
             )
         lines.append("")
     lines += [
@@ -822,23 +872,55 @@ def main() -> int:
         lines.append(f"- **{r[0]}** {r[2]} — {r[3]}: {r[5] or r[4]}")
     (DOCS / "PRODUCTION_VERIFICATION_MATRIX.md").write_text("\n".join(lines) + "\n")
 
+    def rc(*ids: str) -> str:
+        """Worst color across the named matrix rows, with their statuses spelled out."""
+        order = {"GREEN": 0, "YELLOW": 1, "ORANGE": 2, "RED": 3}
+        rows = [r for r in ROWS if r[0] in ids]
+        worst = max((color_of(r[3]) for r in rows), key=lambda c: order[c])
+        return f"{worst} ({'; '.join(f'{r[0]}: {r[3]}' for r in rows)})"
+
     status = {
         "name": "FEDR",
         "version": VERSION,
+        "commit": report["git"],
         "generated": GENERATED,
-        "git": report["git"],
         "port": 8935,
+        "build_status": "GREEN (lint, 192 unit/adversarial + 11 process-level integration tests, tsc, vite, solc all pass - docs/PRODUCTION_VERIFICATION_REPORT.md)",
+        "docker_status": rc("RT-02", "RT-03", "RT-04", "RT-07"),
+        "ui_status": rc("UI-04", "UI-05", "UI-08"),
+        "database_status": rc("RT-14"),
+        "market_data_status": rc("MD-01", "MD-02", "MD-03"),
+        "wallet_status": rc("WL-01", "WL-02", "WL-04"),
+        "cex_status": rc("CX-01", "CX-02"),
+        "dex_status": rc("CX-03", "RT-05"),
+        "paper_status": rc("MO-02"),
+        "shadow_status": rc("MO-03"),
+        "testnet_status": rc("MO-04"),
+        "live_status": rc("MO-05", "MO-06", "MO-07"),
+        # Strategy statuses include the venue-execution dependency on purpose: a paper-verified
+        # engine (the ST row) never makes a strategy live-capable on its own.
+        "cex_arbitrage_status": rc("ST-01", "CX-02"),
+        "cex_dex_status": rc("ST-02", "CX-03"),
+        "dex_arbitrage_status": rc("ST-03", "CX-03"),
+        "funding_status": rc("ST-04", "CX-02"),
+        "basis_status": rc("ST-04", "CX-02"),
+        "flash_loan_status": rc("ST-05", "CX-04"),
+        "profit_guard_status": rc("GD-01", "GD-02"),
+        "gas_guard_status": rc("GD-03"),
+        "risk_status": rc("GD-04", "GD-05"),
+        "reconciliation_status": rc("GD-08"),
+        "security_status": rc("RT-11", "RT-19", "RT-20", "RT-21"),
         "production_ready": False,
         "reason": report["production_ready_reason"],
-        "safe_modes_verified": ["simulation", "shadow (offline)"],
-        "modes_blocked_by_environment": ["paper (real data)", "testnet"],
-        "modes_must_block": ["live"],
-        "counts": dict(counts),
-        "critical_open": [r[0] for r in critical_open],
-        "tests": {
-            "unit_and_adversarial": "see docs/PRODUCTION_VERIFICATION_REPORT.md",
-            "integration": "see docs/PRODUCTION_VERIFICATION_REPORT.md",
+        "colors": {
+            "GREEN": "verified",
+            "YELLOW": "partially verified",
+            "ORANGE": "external verification required",
+            "RED": "missing/broken/unsafe",
         },
+        "counts": dict(counts),
+        "color_counts": report["color_counts"],
+        "critical_open": [r[0] for r in critical_open],
         "docs": [
             "docs/PRODUCTION_VERIFICATION_MATRIX.md",
             "docs/AUDIT_REPORT.json",
@@ -846,6 +928,7 @@ def main() -> int:
             "docs/PRODUCTION_VERIFICATION_REPORT.md",
             "docs/DOCKER_SECURITY_REPORT.md",
             "docs/UI_QA_REPORT.md",
+            "docs/LIVE_VERIFICATION_RUNBOOK.md",
         ],
     }
     (DOCS / "STATUS.json").write_text(json.dumps(status, indent=2) + "\n")

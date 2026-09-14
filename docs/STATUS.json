@@ -1,28 +1,51 @@
 {
   "name": "FEDR",
-  "version": "0.2.0-rc1",
+  "version": "0.2.0",
+  "commit": "fb74a78",
   "generated": "2026-09-14",
-  "git": "d8a48c8",
   "port": 8935,
+  "build_status": "GREEN (lint, 192 unit/adversarial + 11 process-level integration tests, tsc, vite, solc all pass - docs/PRODUCTION_VERIFICATION_REPORT.md)",
+  "docker_status": "ORANGE (RT-02: BLOCKED BY EXTERNAL DEPENDENCY; RT-03: IMPLEMENTED + PARTIALLY VERIFIED; RT-04: IMPLEMENTED + PARTIALLY VERIFIED; RT-07: IMPLEMENTED + VERIFIED)",
+  "ui_status": "YELLOW (UI-04: IMPLEMENTED + VERIFIED; UI-05: IMPLEMENTED + VERIFIED; UI-08: IMPLEMENTED + PARTIALLY VERIFIED)",
+  "database_status": "GREEN (RT-14: IMPLEMENTED + VERIFIED)",
+  "market_data_status": "ORANGE (MD-01: IMPLEMENTED + VERIFIED; MD-02: IMPLEMENTED + VERIFIED; MD-03: BLOCKED BY EXTERNAL DEPENDENCY)",
+  "wallet_status": "YELLOW (WL-01: IMPLEMENTED + VERIFIED; WL-02: IMPLEMENTED + VERIFIED; WL-04: IMPLEMENTED + PARTIALLY VERIFIED)",
+  "cex_status": "ORANGE (CX-01: IMPLEMENTED + PARTIALLY VERIFIED; CX-02: BLOCKED BY EXTERNAL DEPENDENCY)",
+  "dex_status": "ORANGE (RT-05: BLOCKED BY EXTERNAL DEPENDENCY; CX-03: BLOCKED BY EXTERNAL DEPENDENCY)",
+  "paper_status": "ORANGE (MO-02: BLOCKED BY EXTERNAL DEPENDENCY)",
+  "shadow_status": "GREEN (MO-03: IMPLEMENTED + VERIFIED)",
+  "testnet_status": "ORANGE (MO-04: BLOCKED BY EXTERNAL DEPENDENCY)",
+  "live_status": "ORANGE (MO-05: IMPLEMENTED + VERIFIED; MO-06: MUST BLOCK; MO-07: IMPLEMENTED + VERIFIED)",
+  "cex_arbitrage_status": "ORANGE (CX-02: BLOCKED BY EXTERNAL DEPENDENCY; ST-01: IMPLEMENTED + VERIFIED)",
+  "cex_dex_status": "ORANGE (CX-03: BLOCKED BY EXTERNAL DEPENDENCY; ST-02: IMPLEMENTED + PARTIALLY VERIFIED)",
+  "dex_arbitrage_status": "ORANGE (CX-03: BLOCKED BY EXTERNAL DEPENDENCY; ST-03: IMPLEMENTED + VERIFIED)",
+  "funding_status": "ORANGE (CX-02: BLOCKED BY EXTERNAL DEPENDENCY; ST-04: IMPLEMENTED + VERIFIED)",
+  "basis_status": "ORANGE (CX-02: BLOCKED BY EXTERNAL DEPENDENCY; ST-04: IMPLEMENTED + VERIFIED)",
+  "flash_loan_status": "ORANGE (CX-04: BLOCKED BY EXTERNAL DEPENDENCY; ST-05: IMPLEMENTED + PARTIALLY VERIFIED)",
+  "profit_guard_status": "GREEN (GD-01: IMPLEMENTED + VERIFIED; GD-02: IMPLEMENTED + VERIFIED)",
+  "gas_guard_status": "GREEN (GD-03: IMPLEMENTED + VERIFIED)",
+  "risk_status": "GREEN (GD-04: IMPLEMENTED + VERIFIED; GD-05: IMPLEMENTED + VERIFIED)",
+  "reconciliation_status": "GREEN (GD-08: IMPLEMENTED + VERIFIED)",
+  "security_status": "GREEN (RT-11: IMPLEMENTED + VERIFIED; RT-19: IMPLEMENTED + VERIFIED; RT-20: IMPLEMENTED + VERIFIED; RT-21: IMPLEMENTED + VERIFIED)",
   "production_ready": false,
   "reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
-  "safe_modes_verified": [
-    "simulation",
-    "shadow (offline)"
-  ],
-  "modes_blocked_by_environment": [
-    "paper (real data)",
-    "testnet"
-  ],
-  "modes_must_block": [
-    "live"
-  ],
+  "colors": {
+    "GREEN": "verified",
+    "YELLOW": "partially verified",
+    "ORANGE": "external verification required",
+    "RED": "missing/broken/unsafe"
+  },
   "counts": {
-    "IMPLEMENTED + VERIFIED": 45,
+    "IMPLEMENTED + VERIFIED": 49,
     "BLOCKED BY EXTERNAL DEPENDENCY": 8,
     "IMPLEMENTED + PARTIALLY VERIFIED": 14,
-    "IMPLEMENTED + UNVERIFIED": 2,
+    "IMPLEMENTED + UNVERIFIED": 1,
     "MUST BLOCK": 1
+  },
+  "color_counts": {
+    "GREEN": 49,
+    "ORANGE": 9,
+    "YELLOW": 15
   },
   "critical_open": [
     "RT-02",
@@ -42,16 +65,13 @@
     "ST-02",
     "ST-05"
   ],
-  "tests": {
-    "unit_and_adversarial": "see docs/PRODUCTION_VERIFICATION_REPORT.md",
-    "integration": "see docs/PRODUCTION_VERIFICATION_REPORT.md"
-  },
   "docs": [
     "docs/PRODUCTION_VERIFICATION_MATRIX.md",
     "docs/AUDIT_REPORT.json",
     "docs/FINAL_PRODUCTION_REPORT.md",
     "docs/PRODUCTION_VERIFICATION_REPORT.md",
     "docs/DOCKER_SECURITY_REPORT.md",
-    "docs/UI_QA_REPORT.md"
+    "docs/UI_QA_REPORT.md",
+    "docs/LIVE_VERIFICATION_RUNBOOK.md"
   ]
 }

@@ -117,6 +117,15 @@ async def status(app=Depends(require_app)):
         "auto_execute": s.trading.auto_execute,
         "live_activated": s.live.activated,
         "live_allowed_by_env": app.env.live_trading_allowed,
+        "live_stage": app.settings.live.stage if app.settings.live.activated else None,
+        "small_live_test": {
+            "strategy": app.settings.live.small_test_strategy,
+            "route": app.settings.live.small_test_route,
+            "max_notional_usd": "25",
+        }
+        if app.settings.live.activated and app.settings.live.stage == "small_test"
+        else None,
+        "mev_protection": bool(app.env.evm_private_rpc),
         "emergency_stop": ctx.emergency_stop,
         "emergency_stop_reason": app.estop.reason if app.estop else None,
         "breakers": [b.as_dict() for b in ctx.breakers.active],
@@ -231,6 +240,30 @@ async def activate_live(body: ActivateLive, app=Depends(require_app)):
         return await app.activate_live(body.confirmation)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+class ActivateFullLive(BaseModel):
+    confirmation: str
+    acknowledge_no_small_test: bool = False
+
+
+@router.post("/system/live/full")
+async def activate_full_live(body: ActivateFullLive, app=Depends(require_app)):
+    """Promote LIVE from the small-test stage to full live (separate phrase, separate opt-in)."""
+    if not app.env.live_trading_allowed:
+        raise HTTPException(400, "FEDR_LIVE_TRADING_ALLOWED is not true in the environment")
+    try:
+        return await app.activate_full_live(body.confirmation, body.acknowledge_no_small_test)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/system/readiness/strategies")
+async def readiness_strategies(app=Depends(require_app)):
+    """Independent readiness per strategy family (technical readiness + live-verification status)."""
+    from fedr.engine.readiness import strategy_readiness
+
+    return strategy_readiness(app)
 
 
 @router.post("/system/live/deactivate")

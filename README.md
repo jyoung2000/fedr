@@ -16,7 +16,9 @@ open http://localhost:8935      # log in with FEDR_AUTH_TOKEN
 
 Default mode is **PAPER** (real market data, simulated balances and execution). **LIVE is off** and can
 only be entered through the readiness checklist + typed confirmation in the UI; an environment variable
-alone never enables it.
+alone never enables it — and it always starts as a **small live test** (one strategy, one route, a hard
+$25 cap) with a second explicit phrase required for full live. The operator path from checkout to a
+verified live deployment is [docs/LIVE_VERIFICATION_RUNBOOK.md](docs/LIVE_VERIFICATION_RUNBOOK.md).
 
 ## Verification status — read before trusting anything
 

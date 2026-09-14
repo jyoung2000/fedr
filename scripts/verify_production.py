@@ -356,7 +356,10 @@ def main() -> int:
             )
         else:
             probe = (
-                "docker compose up -d --no-deps --no-build app && sleep 15 && "
+                "docker compose up -d --no-deps --no-build app && "
+                # poll instead of a fixed sleep: a cold volume or fresh daemon can need >15s
+                "for i in $(seq 1 45); do sleep 2; "
+                'test "$(curl -s -o /dev/null -w %{http_code} -m 3 http://127.0.0.1:8935/health/live)" = 200 && break; done && '
                 "curl -fsS http://127.0.0.1:8935/health/live && curl -fsS http://127.0.0.1:8935/health/ready && "
                 'test "$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8935/api/trading/state)" = 401 && '
                 "docker compose ps"
