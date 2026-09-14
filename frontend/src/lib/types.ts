@@ -464,6 +464,7 @@ export interface CexRow {
   account: ExchangeAccount | null;
   permissions: Record<string, boolean | null | undefined> | null;
   in_use: boolean;
+  simulated?: boolean;
 }
 
 export interface DexRow {
@@ -481,6 +482,7 @@ export interface DexRow {
   health: Health;
   health_reasons: string[];
   in_use: boolean;
+  simulated?: boolean;
   last_error: string | null;
 }
 

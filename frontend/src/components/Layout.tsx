@@ -73,9 +73,9 @@ export function Layout({ children }: { children: ReactNode }) {
             </StatusPill>
           ) : null}
           {status && !status.bot_enabled ? <StatusPill tone="warning">BOT OFF</StatusPill> : null}
-          <span className={`health health-${sseConnected ? "success" : "warning"} tiny`} title="Live event stream">
+          <span className={`health health-${sseConnected ? "success" : "warning"} tiny`} title="Event stream connection (not the trading mode)">
             <span className={`dot dot-${sseConnected ? "success" : "warning"}`} aria-hidden="true" />
-            {sseConnected ? "Live" : "Reconnecting…"}
+            {sseConnected ? "Connected" : "Reconnecting…"}
           </span>
         </div>
         <div className="header-spacer" />

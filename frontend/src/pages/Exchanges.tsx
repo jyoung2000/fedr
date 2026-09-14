@@ -92,6 +92,7 @@ export function Exchanges() {
                   {row.perps ? <span className="tag">perps</span> : null}
                   <StatusPill tone={connectorTone(row.status)}>{connectorLabel(row.status)}</StatusPill>
                   <StatusPill tone={row.verification === "live_verified" ? "success" : "muted"}>{verificationLabel(row.verification)}</StatusPill>
+                  {row.simulated ? <StatusPill tone="warning">SIMULATED VENUE</StatusPill> : null}
                 </span>
                 <span className="btn-group">
                   <button type="button" className="btn btn-sm btn-primary" onClick={() => setAddFor(row)}>Add API keys</button>
@@ -151,7 +152,7 @@ export function Exchanges() {
                       <td data-label="Venue"><strong>{d.display_name}</strong><div className="tiny muted mono">{d.id}</div></td>
                       <td data-label="Type">{d.connector} · {d.trading_type}</td>
                       <td data-label="Network">{d.network}{d.testnet_network ? <span className="tiny muted"> (testnet: {d.testnet_network})</span> : null}</td>
-                      <td data-label="Status"><StatusPill tone={connectorTone(d.status)}>{connectorLabel(d.status)}</StatusPill></td>
+                      <td data-label="Status"><StatusPill tone={connectorTone(d.status)}>{connectorLabel(d.status)}</StatusPill>{d.simulated ? <div><StatusPill tone="warning">SIMULATED</StatusPill></div> : null}</td>
                       <td data-label="Health"><HealthDot health={d.health} />{d.health_reasons.length ? <div className="tiny muted">{d.health_reasons.join("; ")}</div> : null}{d.last_error ? <div className="tiny money neg">{d.last_error}</div> : null}</td>
                       <td data-label="Verification"><span className="tiny">{verificationLabel(d.verification)}</span></td>
                       <td data-label="Notes"><span className="tiny muted">{d.notes || "—"}</span></td>

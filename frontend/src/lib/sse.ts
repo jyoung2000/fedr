@@ -106,17 +106,18 @@ class SseClient {
 export const sse = new SseClient();
 
 /** Live snapshot (~1 Hz) from the backend plus connection state. */
-export function useSnapshot(): { snapshot: Snapshot | null; connected: boolean } {
+export function useSnapshot(enabled = true): { snapshot: Snapshot | null; connected: boolean } {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(sse.lastSnapshot);
   const [connected, setConnected] = useState(sse.connected);
   useEffect(() => {
+    if (!enabled) return;
     const off = sse.on("snapshot", (d) => setSnapshot(d as Snapshot));
     const offStatus = sse.onStatus(setConnected);
     return () => {
       off();
       offStatus();
     };
-  }, []);
+  }, [enabled]);
   return { snapshot, connected };
 }
 

@@ -46,7 +46,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const enabled = auth.checked && (!auth.required || auth.authenticated);
   const statusPoll = usePoll<SystemStatus>(() => (enabled ? api.get<SystemStatus>("/api/system/status") : Promise.reject(new Error("waiting for authentication"))), 5000, [enabled]);
-  const { snapshot, connected } = useSnapshot();
+  const { snapshot, connected } = useSnapshot(enabled);
 
   const refreshStatus = statusPoll.refresh;
   useSseEvent("breakers", () => void refreshStatus());

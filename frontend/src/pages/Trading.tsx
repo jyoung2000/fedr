@@ -160,7 +160,7 @@ export function Trading() {
           <Table
             dense
             columns={[
-              { key: "key", header: "Route", render: (e) => <span className="mono small">{e.key}</span> },
+              { key: "key", header: "Route", render: (e) => <span className="mono small break">{e.key}</span> },
               { key: "n", header: "Samples", render: (e) => e.samples, align: "right" },
               { key: "err", header: "Error %", render: (e) => <span className="mono">{Number(e.error_pct).toFixed(3)}%</span>, align: "right" },
               { key: "fill", header: "Fill reliability", render: (e) => <span className="mono">{(Number(e.fill_reliability) * 100).toFixed(0)}%</span>, align: "right" },
