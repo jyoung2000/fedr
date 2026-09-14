@@ -98,7 +98,7 @@ export function Exchanges() {
                   {row.account ? (
                     <>
                       <button type="button" className="btn btn-sm" onClick={() => test(row)} disabled={busy === `test-${row.id}`}>{busy === `test-${row.id}` ? "Testing…" : "Test connection"}</button>
-                      <button type="button" className="btn btn-sm" onClick={() => run(`en-${row.id}`, () => api.post(`/api/exchanges/accounts/${row.account!.id}/enabled`, { enabled: !row.account!.enabled }), row.account.enabled ? "Account disabled" : "Account enabled")} disabled={busy === `en-${row.id}`}>{row.account.enabled ? "Disable" : "Enable"}</button>
+                      <button type="button" className="btn btn-sm" onClick={() => { const acct = row.account!; void run(`en-${row.id}`, () => api.post(`/api/exchanges/accounts/${acct.id}/enabled`, { enabled: !acct.enabled }), acct.enabled ? "Account disabled" : "Account enabled"); }} disabled={busy === `en-${row.id}`}>{row.account.enabled ? "Disable" : "Enable"}</button>
                       <button type="button" className="btn btn-sm" onClick={() => setRemoveFor(row)}>Remove</button>
                     </>
                   ) : null}
