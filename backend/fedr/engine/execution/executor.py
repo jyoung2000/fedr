@@ -66,6 +66,8 @@ class ExecutionEngine:
             return await self._abort(tr, "circuit breaker active")
         if opp.strategy is Strategy.FLASH_LOAN:
             return await self._abort(tr, "flash-loan execution is routed through the flash-loan engine")
+        if opp.strategy in (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS):
+            return await self._abort(tr, "carry strategies (spot/perp, funding, basis) are evaluation-only in this build: position margin, funding accrual and close-out are not implemented")
         # ---- re-validate with fresh quotes (never trade on the displayed spread) ----
         cand = self.opps.candidate_for(opp)
         if cand is None:

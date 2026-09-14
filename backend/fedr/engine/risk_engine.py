@@ -114,11 +114,20 @@ class RiskEngine:
                 reasons.append(f"balance of {quote} on {buy.venue} unknown")
             elif have_quote < need_quote:
                 reasons.append(f"insufficient {quote} on {buy.venue}: need {need_quote:.2f}, have {have_quote:.2f}")
-            have_base = portfolio.available_balances.get((sell.venue, base))
-            if have_base is None:
-                reasons.append(f"balance of {base} on {sell.venue} unknown")
-            elif have_base < sell.base_amount:
-                reasons.append(f"insufficient {base} on {sell.venue}: need {sell.base_amount}, have {have_base}")
+            if sell.kind is VenueKind.PERP:
+                # a perpetual short is collateralised in quote (1x - leverage is not allowed by default)
+                margin = sell.quote_amount if not r.leverage_allowed else sell.quote_amount / 2
+                have_margin = portfolio.available_balances.get((sell.venue, quote))
+                if have_margin is None:
+                    reasons.append(f"collateral balance of {quote} on {sell.venue} unknown")
+                elif have_margin < margin:
+                    reasons.append(f"insufficient {quote} collateral on {sell.venue}: need {margin:.2f}, have {have_margin:.2f}")
+            else:
+                have_base = portfolio.available_balances.get((sell.venue, base))
+                if have_base is None:
+                    reasons.append(f"balance of {base} on {sell.venue} unknown")
+                elif have_base < sell.base_amount:
+                    reasons.append(f"insufficient {base} on {sell.venue}: need {sell.base_amount}, have {have_base}")
         for leg in (buy, sell):
             if leg.kind is VenueKind.DEX and leg.chain is not None:
                 ok = portfolio.gas_reserve_ok.get(leg.chain.value)

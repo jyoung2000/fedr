@@ -455,3 +455,26 @@ def test_flash_loan_paper_path_aborts_when_unprofitable_after_refresh(harness):
         assert h.ledger.get("base", "USDC").free > before
 
     asyncio.run(run())
+
+
+def test_carry_strategy_is_evaluation_only(harness):
+    async def run():
+        from fedr.core.enums import Strategy
+        from fedr.sim.venues import SyntheticPerpVenue
+
+        h = await harness().start()
+        h.settings.strategies.spot_perp = True
+        h.ctx.connectors["binance-perp"] = SyntheticPerpVenue(h.market, "binance-perp", PAIRS, D("0.05"))
+        await h.ctx.connectors["binance-perp"].connect()
+        h.ledger.seed({**{v: {a: b.free for a, b in h.ledger.balances(v).items()} for v in h.ledger.venues()}, "binance-perp": {"USDC": D("5000")}})
+        await h.tick()
+        opps = await h.opps.scan()
+        carry = [o for o in opps if o.strategy is Strategy.SPOT_PERP]
+        assert carry, "carry route should be evaluated"
+        o = carry[0]
+        assert o.extra["carry"] is not None and o.profit.expected_costs.funding <= 0  # funding income modelled
+        tr = await h.exec.execute(o, trigger="test")
+        assert tr.status is TradeStatus.ABORTED and "evaluation-only" in tr.explanation
+        assert h.ledger.get("binance-perp", "USDC").used == 0
+
+    asyncio.run(run())

@@ -118,7 +118,8 @@ class SyntheticPerpVenue(SyntheticCexVenue):
 
     async def fetch_order_book(self, symbol: str, depth: int = 50) -> OrderBook:
         spot = symbol.split(":")[0]
-        ob = self.sim.order_book("binance", spot, levels=min(depth, 40))
+        source = "binance" if "binance" in self.sim.venues else next(n for n, v in self.sim.venues.items() if v.kind == "cex")
+        ob = self.sim.order_book(source, spot, levels=min(depth, 40))
         # perp trades at a small premium to spot (positive basis) in the synthetic world
         prem = Decimal("1.0004")
         for lv in ob.bids + ob.asks:
