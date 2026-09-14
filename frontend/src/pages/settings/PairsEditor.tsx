@@ -10,7 +10,9 @@ export function PairsEditor({ pairs, onSaved }: { pairs: string[]; onSaved: (s: 
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setDraft(pairs), [pairs]);
+  const pairsKey = pairs.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setDraft(pairs), [pairsKey]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(pairs);
 
   const add = (e: FormEvent) => {

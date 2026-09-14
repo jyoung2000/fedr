@@ -78,7 +78,9 @@ interface Props {
 /** Generic per-section settings form; saves only changed fields via PUT /api/settings {patch}. */
 export function SectionForm({ section, values, onSaved }: Props) {
   const toast = useToast();
-  const initial = useMemo(() => toDraft(section.fields, values), [section, values]);
+  const valuesKey = JSON.stringify(values);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => toDraft(section.fields, values), [section, valuesKey]);
   const [draft, setDraft] = useState<Draft>(initial);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

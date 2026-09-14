@@ -36,6 +36,7 @@ export const GENERAL: SectionDef = {
   fields: [
     ms("scan_interval_ms", "Scan interval", "How often every route is re-evaluated"),
     { key: "quote_assets", label: "Quote assets", type: "list", help: "Comma-separated, e.g. USDC, USDT, USD" },
+    { key: "dexes", label: "Active DEX venues", type: "list", help: "Comma-separated venue ids from the Exchanges page, e.g. jupiter, uniswap-base" },
   ],
 };
 

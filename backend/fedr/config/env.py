@@ -38,7 +38,6 @@ class EnvSettings(BaseSettings):
 
     # Gateway (DEX middleware)
     gateway_url: str = "http://gateway:15888"
-    gateway_passphrase: str | None = None  # not used by the app (Gateway reads GATEWAY_PASSPHRASE itself)
     gateway_api_key: str | None = None  # bearer token when Gateway runs with GATEWAY_REQUIRE_AUTH=true
     gateway_enabled: bool = True
     gateway_timeout_s: float = 8.0
@@ -69,10 +68,6 @@ class EnvSettings(BaseSettings):
     flashloan_contract_sepolia: str | None = None
 
     telemetry_enabled: bool = False  # local-first: nothing leaves the box unless opted-in
-
-    # Market data
-    market_data_source: str = "auto"  # auto | ccxt | synthetic (synthetic is SIMULATION-only)
-    scan_interval_ms: int = 1500
 
     demo_seed: int | None = Field(default=None, description="Deterministic seed for SIMULATION mode data")
 
