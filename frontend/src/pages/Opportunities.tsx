@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "../components/Card";
 import { Checkbox, Select } from "../components/Field";
-import { OpportunityRow } from "../components/OpportunityRow";
+import { OpportunityRow, routeKey } from "../components/OpportunityRow";
 import { Skeleton } from "../components/Spinner";
 import { EmptyState, ErrorState } from "../components/States";
 import { StatusPill } from "../components/StatusPill";
@@ -84,7 +84,7 @@ export function Opportunities() {
         ) : (
           <div style={{ margin: "-14px -16px" }}>
             {filtered.map((o) => (
-              <OpportunityRow key={o.id} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
+              <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
             ))}
           </div>
         )}

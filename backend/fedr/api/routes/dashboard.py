@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from fedr.api.auth import require_app
-from fedr.api.serializers import opportunity_summary, trade_summary
+from fedr.api.serializers import opportunity_summary, trade_row_from_db, trade_summary
 from fedr.core.enums import VenueKind
 
 router = APIRouter()
@@ -60,7 +60,7 @@ async def dashboard(app=Depends(require_app)):
         "venues": venues,
         "balances": balances,
         "active_trades": [trade_summary(t) for t in app.executor.active.values()],
-        "recent_trades": [trade_summary(t) for t in reversed(app.executor.recent[-5:])],
+        "recent_trades": [trade_summary(t) for t in reversed(app.executor.recent[-5:])] or [trade_row_from_db(r) for r in await app.repo.list_trades(app.mode, limit=5)],
         "risk": {
             "daily_pnl": str(ctx.daily_pnl_usd),
             "max_daily_loss": str(app.settings.risk.max_daily_loss_usd),

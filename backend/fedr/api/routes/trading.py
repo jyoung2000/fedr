@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from fedr.api.auth import require_app
-from fedr.api.serializers import trade_detail, trade_summary
+from fedr.api.serializers import trade_detail, trade_row_from_db, trade_summary
 from fedr.core.enums import TradingMode
 
 router = APIRouter()
@@ -64,7 +64,7 @@ async def state(app=Depends(require_app)):
         "shadow_mode": s.general.shadow_mode,
         "emergency_stop": ctx.emergency_stop,
         "active": [trade_detail(t) for t in app.executor.active.values()],
-        "recent": [trade_summary(t) for t in reversed(app.executor.recent[-30:])],
+        "recent": [trade_summary(t) for t in reversed(app.executor.recent[-30:])] or [trade_row_from_db(r) for r in await app.repo.list_trades(app.mode, limit=30)],
         "shadow": {**(await app.repo.shadow_summary()), **app.shadow.stats},
         "rebalance": [
             {

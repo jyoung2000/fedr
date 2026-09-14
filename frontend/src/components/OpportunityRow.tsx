@@ -4,6 +4,11 @@ import type { OpportunitySummary } from "../lib/types";
 import { ProfitTriple } from "./ProfitTriple";
 import { DecisionPill, StatusPill } from "./StatusPill";
 
+/** Stable identity for a route across scans (opportunity ids change on every scan). */
+export function routeKey(o: Pick<OpportunitySummary, "strategy" | "pair" | "buy_venue" | "sell_venue">): string {
+  return `${o.strategy}|${o.pair}|${o.buy_venue}|${o.sell_venue}`;
+}
+
 /** One opportunity in a list: pair, route, three-level profit, required, risk and decision (+ Why? expander). */
 export function OpportunityRow({ o, onOpen }: { o: OpportunitySummary; onOpen: (o: OpportunitySummary) => void }) {
   const [why, setWhy] = useState(false);

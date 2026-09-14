@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Card } from "../components/Card";
 import { Gauge } from "../components/Gauge";
 import { Money } from "../components/MoneyText";
-import { OpportunityRow } from "../components/OpportunityRow";
+import { OpportunityRow, routeKey } from "../components/OpportunityRow";
 import { Skeleton } from "../components/Spinner";
 import { ErrorState, EmptyState } from "../components/States";
 import { HealthDot, StatusPill } from "../components/StatusPill";
@@ -135,7 +135,7 @@ export function Dashboard() {
               ) : null}
               <div style={{ margin: "0 -16px -14px" }}>
                 {best.map((o) => (
-                  <OpportunityRow key={o.id} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
+                  <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
                 ))}
               </div>
             </>
