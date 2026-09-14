@@ -1,10 +1,11 @@
 """DEX venue connector backed by Hummingbot Gateway."""
+
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Callable
 
 from fedr.connectors.base import (
     ConnectorError,
@@ -106,13 +107,18 @@ class GatewayConnector(VenueConnector):
                     price_step=Decimal("0.00000001"),
                     taker_fee_pct=self.spec.typical_fee_pct,
                     chain=self.chain,
-                    extra={"base_address": self._tokens[base].get("address"), "quote_address": self._tokens[quote].get("address")},
+                    extra={
+                        "base_address": self._tokens[base].get("address"),
+                        "quote_address": self._tokens[quote].get("address"),
+                    },
                 )
         self.markets = out
         return out
 
     # ------------------------------------------------------------------ quotes
-    async def get_quote(self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None) -> ExecutionQuote:
+    async def get_quote(
+        self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None
+    ) -> ExecutionQuote:
         base, quote = symbol.split("/")
         t0 = time.perf_counter()
         try:
@@ -174,10 +180,15 @@ class GatewayConnector(VenueConnector):
             fee_source="embedded_in_quote",
             gas_limit=gq.gas_estimate or self.spec.gas_limit,
             min_received=min_received,
-            route=f"{self.display_name} {self.spec.trading_type} on {self.network}" + (" (approx. exact-out)" if gq.approximation else ""),
+            route=f"{self.display_name} {self.spec.trading_type} on {self.network}"
+            + (" (approx. exact-out)" if gq.approximation else ""),
             quote_id=gq.quote_id,
             chain=self.chain,
-            extra={"max_amount_in": str(max_in) if max_in is not None else None, "token_in": gq.token_in, "token_out": gq.token_out},
+            extra={
+                "max_amount_in": str(max_in) if max_in is not None else None,
+                "token_in": gq.token_in,
+                "token_out": gq.token_out,
+            },
         )
 
     def _prune_quotes(self) -> None:
@@ -214,10 +225,20 @@ class GatewayConnector(VenueConnector):
                 gq = self._quotes.get(req.quote_id)
                 if gq is None or now_ms() - gq.fetched_at_ms > QUOTE_MAX_AGE_MS:
                     raise QuoteExpired(f"quote {req.quote_id} is stale or unknown - requote required")
-                resp = await self.client.execute_quote(self.spec.connector, self.network, self.wallet_address, req.quote_id)
+                resp = await self.client.execute_quote(
+                    self.spec.connector, self.network, self.wallet_address, req.quote_id
+                )
             else:
                 resp = await self.client.execute_swap(
-                    self.spec.connector, self.spec.trading_type, self.network, self.wallet_address, base, quote, req.amount, req.side.value, self.slippage_tolerance_pct
+                    self.spec.connector,
+                    self.spec.trading_type,
+                    self.network,
+                    self.wallet_address,
+                    base,
+                    quote,
+                    req.amount,
+                    req.side.value,
+                    self.slippage_tolerance_pct,
                 )
         except QuoteExpired:
             raise
@@ -234,7 +255,11 @@ class GatewayConnector(VenueConnector):
                 if sig:
                     return await self._await_confirmation(result, sig, req)
                 raise VenueUnavailable(str(exc)) from exc
-            result.status = OrderStatus.FAILED if exc.code in ("SIMULATION_FAILED", "SLIPPAGE_EXCEEDED", "INSUFFICIENT_BALANCE") else OrderStatus.REJECTED
+            result.status = (
+                OrderStatus.FAILED
+                if exc.code in ("SIMULATION_FAILED", "SLIPPAGE_EXCEEDED", "INSUFFICIENT_BALANCE")
+                else OrderStatus.REJECTED
+            )
             return result
         finally:
             self.health_tracker.record_latency((time.perf_counter() - t0) * 1000)
@@ -253,7 +278,9 @@ class GatewayConnector(VenueConnector):
         result.completed_at_ms = now_ms()
         return result
 
-    async def _await_confirmation(self, result: OrderResult, signature: str, req: OrderRequest) -> OrderResult:
+    async def _await_confirmation(
+        self, result: OrderResult, signature: str, req: OrderRequest
+    ) -> OrderResult:
         deadline = time.monotonic() + max(15.0, (req.deadline_ms or 30_000) / 1000)
         while time.monotonic() < deadline:
             await asyncio.sleep(1.5)
@@ -278,7 +305,9 @@ class GatewayConnector(VenueConnector):
         result.error = "confirmation timeout - transaction still pending"
         return result
 
-    def _apply_confirmed(self, result: OrderResult, data: dict, req: OrderRequest, tx_data: dict | None = None) -> None:
+    def _apply_confirmed(
+        self, result: OrderResult, data: dict, req: OrderRequest, tx_data: dict | None = None
+    ) -> None:
         base_change = D(data.get("baseTokenBalanceChange") or 0)
         quote_change = D(data.get("quoteTokenBalanceChange") or 0)
         if base_change == 0 and quote_change == 0:
@@ -321,7 +350,9 @@ class GatewayConnector(VenueConnector):
         t0 = time.perf_counter()
         try:
             await self.client.chain_status(self.spec.gateway_chain, self.network)
-            self.health_tracker.last_market_data_ms = max(self.health_tracker.last_market_data_ms, now_ms() - 5_000)
+            self.health_tracker.last_market_data_ms = max(
+                self.health_tracker.last_market_data_ms, now_ms() - 5_000
+            )
         except GatewayError as exc:
             self.health_tracker.record_error()
             self.last_error = str(exc)[:200]
@@ -335,7 +366,15 @@ class GatewayConnector(VenueConnector):
 
     def status_dict(self) -> dict:
         d = super().status_dict()
-        d.update({"network": self.network, "connector": self.spec.connector, "trading_type": self.spec.trading_type, "wallet": self.wallet_address, "maintained": self.spec.maintained})
+        d.update(
+            {
+                "network": self.network,
+                "connector": self.spec.connector,
+                "trading_type": self.spec.trading_type,
+                "wallet": self.wallet_address,
+                "maintained": self.spec.maintained,
+            }
+        )
         return d
 
 

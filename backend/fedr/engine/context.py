@@ -1,9 +1,11 @@
 """Shared runtime context handed to the engines (composition root lives in fedr.app)."""
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 from fedr.config.env import EnvSettings
 from fedr.config.schema import AppSettings
@@ -87,7 +89,11 @@ class EngineContext:
         c = self.connectors.get(name)
         if c is None or not c.connected:
             return VenueHealth.UNKNOWN
-        rep = c.health_tracker.classify(name, market_data_max_age_ms=60_000 if c.kind is VenueKind.DEX else 15_000, expect_ws="ws" in c.capabilities)
+        rep = c.health_tracker.classify(
+            name,
+            market_data_max_age_ms=60_000 if c.kind is VenueKind.DEX else 15_000,
+            expect_ws="ws" in c.capabilities,
+        )
         prev = self.health.get(name)
         if prev is not None and prev.maintenance:
             rep.maintenance = True

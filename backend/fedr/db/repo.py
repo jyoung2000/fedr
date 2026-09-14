@@ -1,7 +1,8 @@
 """Repository: all database access used by engines and the API."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -37,7 +38,7 @@ from fedr.db.models import (
 
 
 def _day(ts: datetime | None = None) -> str:
-    return (ts or utcnow()).astimezone(timezone.utc).strftime("%Y-%m-%d")
+    return (ts or utcnow()).astimezone(UTC).strftime("%Y-%m-%d")
 
 
 class Repo:
@@ -61,7 +62,9 @@ class Repo:
     # ------------------------------------------------------------------ exchanges
     async def list_exchange_accounts(self) -> list[ExchangeAccount]:
         async with self.db.session() as s:
-            return list((await s.execute(select(ExchangeAccount).order_by(ExchangeAccount.created_at))).scalars())
+            return list(
+                (await s.execute(select(ExchangeAccount).order_by(ExchangeAccount.created_at))).scalars()
+            )
 
     async def get_exchange_account(self, account_id: str) -> ExchangeAccount | None:
         async with self.db.session() as s:
@@ -122,8 +125,14 @@ class Repo:
     async def prune_opportunities(self, keep: int = 2000) -> None:
         async with self.db.session() as s:
             ids = (
-                await s.execute(select(OpportunityRow.id).order_by(desc(OpportunityRow.created_at)).offset(keep))
-            ).scalars().all()
+                (
+                    await s.execute(
+                        select(OpportunityRow.id).order_by(desc(OpportunityRow.created_at)).offset(keep)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             if ids:
                 await s.execute(delete(OpportunityRow).where(OpportunityRow.id.in_(ids)))
 
@@ -161,9 +170,11 @@ class Repo:
                     prediction_error=None if tr.prediction_error is None else str(tr.prediction_error),
                     explanation=tr.explanation,
                     payload=payload,
-                    started_at=datetime.fromtimestamp(tr.started_at_ms / 1000, tz=timezone.utc),
+                    started_at=datetime.fromtimestamp(tr.started_at_ms / 1000, tz=UTC),
                     completed_at=(
-                        datetime.fromtimestamp(tr.completed_at_ms / 1000, tz=timezone.utc) if tr.completed_at_ms else None
+                        datetime.fromtimestamp(tr.completed_at_ms / 1000, tz=UTC)
+                        if tr.completed_at_ms
+                        else None
                     ),
                 )
             )
@@ -191,7 +202,9 @@ class Repo:
                     )
                 )
                 existing = (
-                    await s.execute(select(FillRow.trade_id).where(FillRow.order_id == f"{tr.id}:{leg.order_id}"))
+                    await s.execute(
+                        select(FillRow.trade_id).where(FillRow.order_id == f"{tr.id}:{leg.order_id}")
+                    )
                 ).first()
                 if existing is None:
                     for f in leg.fills:
@@ -208,7 +221,7 @@ class Repo:
                                 fee_amount=str(f.fee_amount),
                                 fee_asset=f.fee_asset,
                                 tx_hash=f.tx_hash,
-                                ts=datetime.fromtimestamp(f.ts_ms / 1000, tz=timezone.utc),
+                                ts=datetime.fromtimestamp(f.ts_ms / 1000, tz=UTC),
                             )
                         )
 
@@ -237,7 +250,9 @@ class Repo:
     async def count_failed_trades_since(self, mode: TradingMode, since: datetime) -> int:
         async with self.db.session() as s:
             q = select(func.count(Trade.id)).where(
-                Trade.mode == mode.value, Trade.status.in_(["failed", "recovering", "hedged"]), Trade.started_at >= since
+                Trade.mode == mode.value,
+                Trade.status.in_(["failed", "recovering", "hedged"]),
+                Trade.started_at >= since,
             )
             return int((await s.execute(q)).scalar() or 0)
 
@@ -263,7 +278,20 @@ class Repo:
                 await s.execute(select(PnlDaily).where(PnlDaily.mode == mode.value, PnlDaily.day == day))
             ).scalar_one_or_none()
             if row is None:
-                row = PnlDaily(mode=mode.value, day=day, gross="0", trading_fees="0", gas="0", funding="0", slippage="0", rebalancing="0", other="0", net="0", trades=0, wins=0)
+                row = PnlDaily(
+                    mode=mode.value,
+                    day=day,
+                    gross="0",
+                    trading_fees="0",
+                    gas="0",
+                    funding="0",
+                    slippage="0",
+                    rebalancing="0",
+                    other="0",
+                    net="0",
+                    trades=0,
+                    wins=0,
+                )
                 s.add(row)
             row.gross = str(D(row.gross) + gross)
             row.trading_fees = str(D(row.trading_fees) + trading_fees)
@@ -280,7 +308,10 @@ class Repo:
         today = _day()
         async with self.db.session() as s:
             rows = list((await s.execute(select(PnlDaily).where(PnlDaily.mode == mode.value))).scalars())
-        total = {k: ZERO for k in ("gross", "trading_fees", "gas", "funding", "slippage", "rebalancing", "other", "net")}
+        total = {
+            k: ZERO
+            for k in ("gross", "trading_fees", "gas", "funding", "slippage", "rebalancing", "other", "net")
+        }
         today_net = ZERO
         trades = wins = 0
         for r in rows:
@@ -297,7 +328,14 @@ class Repo:
             "trades": trades,
             "wins": wins,
             "days": [
-                {"day": r.day, "net": r.net, "gross": r.gross, "fees": r.trading_fees, "gas": r.gas, "trades": r.trades}
+                {
+                    "day": r.day,
+                    "net": r.net,
+                    "gross": r.gross,
+                    "fees": r.trading_fees,
+                    "gas": r.gas,
+                    "trades": r.trades,
+                }
                 for r in sorted(rows, key=lambda r: r.day)[-30:]
             ],
         }
@@ -309,26 +347,41 @@ class Repo:
     # ------------------------------------------------------------------ paper ledger
     async def load_paper_balances(self, mode: TradingMode) -> dict[str, dict[str, tuple[Decimal, Decimal]]]:
         async with self.db.session() as s:
-            rows = list((await s.execute(select(PaperBalance).where(PaperBalance.mode == mode.value))).scalars())
+            rows = list(
+                (await s.execute(select(PaperBalance).where(PaperBalance.mode == mode.value))).scalars()
+            )
         out: dict[str, dict[str, tuple[Decimal, Decimal]]] = {}
         for r in rows:
             out.setdefault(r.venue, {})[r.asset] = (D(r.free), D(r.used))
         return out
 
-    async def save_paper_balances(self, mode: TradingMode, balances: dict[str, dict[str, tuple[Decimal, Decimal]]]) -> None:
+    async def save_paper_balances(
+        self, mode: TradingMode, balances: dict[str, dict[str, tuple[Decimal, Decimal]]]
+    ) -> None:
         async with self.db.session() as s:
             await s.execute(delete(PaperBalance).where(PaperBalance.mode == mode.value))
             for venue, assets in balances.items():
                 for asset, (free, used) in assets.items():
-                    s.add(PaperBalance(mode=mode.value, venue=venue, asset=asset, free=str(free), used=str(used)))
+                    s.add(
+                        PaperBalance(
+                            mode=mode.value, venue=venue, asset=asset, free=str(free), used=str(used)
+                        )
+                    )
 
     # ------------------------------------------------------------------ balances / inventory
-    async def snapshot_balances(self, mode: TradingMode, venue: str, balances: dict[str, tuple[Decimal, Decimal, Decimal | None]]) -> None:
+    async def snapshot_balances(
+        self, mode: TradingMode, venue: str, balances: dict[str, tuple[Decimal, Decimal, Decimal | None]]
+    ) -> None:
         async with self.db.session() as s:
             for asset, (free, used, usd) in balances.items():
                 s.add(
                     BalanceSnapshot(
-                        mode=mode.value, venue=venue, asset=asset, free=str(free), used=str(used), usd_value=None if usd is None else str(usd)
+                        mode=mode.value,
+                        venue=venue,
+                        asset=asset,
+                        free=str(free),
+                        used=str(used),
+                        usd_value=None if usd is None else str(usd),
                     )
                 )
 
@@ -339,35 +392,70 @@ class Repo:
 
     async def list_inventory(self, mode: TradingMode) -> list[InventoryTarget]:
         async with self.db.session() as s:
-            return list((await s.execute(select(InventoryTarget).where(InventoryTarget.mode == mode.value))).scalars())
+            return list(
+                (await s.execute(select(InventoryTarget).where(InventoryTarget.mode == mode.value))).scalars()
+            )
 
-    async def upsert_inventory(self, mode: TradingMode, venue: str, asset: str, target: Decimal, minimum: Decimal, maximum: Decimal | None) -> None:
+    async def upsert_inventory(
+        self,
+        mode: TradingMode,
+        venue: str,
+        asset: str,
+        target: Decimal,
+        minimum: Decimal,
+        maximum: Decimal | None,
+    ) -> None:
         async with self.db.session() as s:
             row = (
                 await s.execute(
                     select(InventoryTarget).where(
-                        InventoryTarget.mode == mode.value, InventoryTarget.venue == venue, InventoryTarget.asset == asset
+                        InventoryTarget.mode == mode.value,
+                        InventoryTarget.venue == venue,
+                        InventoryTarget.asset == asset,
                     )
                 )
             ).scalar_one_or_none()
             if row is None:
                 row = InventoryTarget(mode=mode.value, venue=venue, asset=asset)
                 s.add(row)
-            row.target, row.minimum, row.maximum = str(target), str(minimum), None if maximum is None else str(maximum)
+            row.target, row.minimum, row.maximum = (
+                str(target),
+                str(minimum),
+                None if maximum is None else str(maximum),
+            )
 
     # ------------------------------------------------------------------ risk / breakers / audit
-    async def add_risk_event(self, mode: TradingMode, severity: str, kind: str, detail: str, payload: dict | None = None) -> None:
+    async def add_risk_event(
+        self, mode: TradingMode, severity: str, kind: str, detail: str, payload: dict | None = None
+    ) -> None:
         async with self.db.session() as s:
-            s.add(RiskEvent(mode=mode.value, severity=severity, kind=kind, detail=detail, payload=to_jsonable(payload or {})))
+            s.add(
+                RiskEvent(
+                    mode=mode.value,
+                    severity=severity,
+                    kind=kind,
+                    detail=detail,
+                    payload=to_jsonable(payload or {}),
+                )
+            )
 
     async def list_risk_events(self, mode: TradingMode, limit: int = 50) -> list[RiskEvent]:
         async with self.db.session() as s:
-            q = select(RiskEvent).where(RiskEvent.mode == mode.value).order_by(desc(RiskEvent.ts)).limit(limit)
+            q = (
+                select(RiskEvent)
+                .where(RiskEvent.mode == mode.value)
+                .order_by(desc(RiskEvent.ts))
+                .limit(limit)
+            )
             return list((await s.execute(q)).scalars())
 
     async def save_breakers(self, breakers: list[Any]) -> None:
         async with self.db.session() as s:
-            await s.execute(update(CircuitBreakerRow).where(CircuitBreakerRow.active.is_(True)).values(active=False, reset_at=utcnow()))
+            await s.execute(
+                update(CircuitBreakerRow)
+                .where(CircuitBreakerRow.active.is_(True))
+                .values(active=False, reset_at=utcnow())
+            )
             for b in breakers:
                 s.add(
                     CircuitBreakerRow(
@@ -376,17 +464,36 @@ class Repo:
                         detail=b.detail,
                         auto=b.auto,
                         active=True,
-                        tripped_at=datetime.fromtimestamp(b.tripped_at_ms / 1000, tz=timezone.utc),
+                        tripped_at=datetime.fromtimestamp(b.tripped_at_ms / 1000, tz=UTC),
                     )
                 )
 
     async def load_active_breakers(self) -> list[CircuitBreakerRow]:
         async with self.db.session() as s:
-            return list((await s.execute(select(CircuitBreakerRow).where(CircuitBreakerRow.active.is_(True)))).scalars())
+            return list(
+                (
+                    await s.execute(select(CircuitBreakerRow).where(CircuitBreakerRow.active.is_(True)))
+                ).scalars()
+            )
 
-    async def audit(self, mode: TradingMode, event_type: str, summary: str, payload: dict | None = None, actor: str = "system") -> None:
+    async def audit(
+        self,
+        mode: TradingMode,
+        event_type: str,
+        summary: str,
+        payload: dict | None = None,
+        actor: str = "system",
+    ) -> None:
         async with self.db.session() as s:
-            s.add(AuditLog(mode=mode.value, event_type=event_type, actor=actor, summary=summary, payload=to_jsonable(payload or {})))
+            s.add(
+                AuditLog(
+                    mode=mode.value,
+                    event_type=event_type,
+                    actor=actor,
+                    summary=summary,
+                    payload=to_jsonable(payload or {}),
+                )
+            )
 
     async def list_audit(self, limit: int = 100, event_type: str | None = None) -> list[AuditLog]:
         async with self.db.session() as s:
@@ -395,9 +502,26 @@ class Repo:
                 q = q.where(AuditLog.event_type == event_type)
             return list((await s.execute(q)).scalars())
 
-    async def add_execution_error(self, mode: TradingMode, kind: str, message: str, venue: str | None = None, trade_id: str | None = None, payload: dict | None = None) -> None:
+    async def add_execution_error(
+        self,
+        mode: TradingMode,
+        kind: str,
+        message: str,
+        venue: str | None = None,
+        trade_id: str | None = None,
+        payload: dict | None = None,
+    ) -> None:
         async with self.db.session() as s:
-            s.add(ExecutionError(mode=mode.value, kind=kind, message=message, venue=venue, trade_id=trade_id, payload=to_jsonable(payload or {})))
+            s.add(
+                ExecutionError(
+                    mode=mode.value,
+                    kind=kind,
+                    message=message,
+                    venue=venue,
+                    trade_id=trade_id,
+                    payload=to_jsonable(payload or {}),
+                )
+            )
 
     # ------------------------------------------------------------------ experience
     async def get_experience(self, key: str) -> ExperienceStat | None:
@@ -422,11 +546,15 @@ class Repo:
 
     async def list_shadow(self, limit: int = 100) -> list[ShadowRecord]:
         async with self.db.session() as s:
-            return list((await s.execute(select(ShadowRecord).order_by(desc(ShadowRecord.ts)).limit(limit))).scalars())
+            return list(
+                (await s.execute(select(ShadowRecord).order_by(desc(ShadowRecord.ts)).limit(limit))).scalars()
+            )
 
     async def shadow_summary(self) -> dict[str, Any]:
         async with self.db.session() as s:
-            rows = list((await s.execute(select(ShadowRecord).where(ShadowRecord.would_trade.is_(True)))).scalars())
+            rows = list(
+                (await s.execute(select(ShadowRecord).where(ShadowRecord.would_trade.is_(True)))).scalars()
+            )
             total_rows = int((await s.execute(select(func.count(ShadowRecord.id)))).scalar() or 0)
         predicted = sum((D(r.predicted_profit) for r in rows), ZERO)
         hypo = sum((D(r.hypothetical_profit) for r in rows if r.hypothetical_profit is not None), ZERO)
@@ -448,7 +576,12 @@ class Repo:
 
     async def list_rebalances(self, mode: TradingMode, limit: int = 20) -> list[Rebalance]:
         async with self.db.session() as s:
-            q = select(Rebalance).where(Rebalance.mode == mode.value).order_by(desc(Rebalance.ts)).limit(limit)
+            q = (
+                select(Rebalance)
+                .where(Rebalance.mode == mode.value)
+                .order_by(desc(Rebalance.ts))
+                .limit(limit)
+            )
             return list((await s.execute(q)).scalars())
 
     # ------------------------------------------------------------------ backtests / markets
@@ -458,7 +591,9 @@ class Repo:
 
     async def list_backtests(self, limit: int = 20) -> list[BacktestRun]:
         async with self.db.session() as s:
-            return list((await s.execute(select(BacktestRun).order_by(desc(BacktestRun.ts)).limit(limit))).scalars())
+            return list(
+                (await s.execute(select(BacktestRun).order_by(desc(BacktestRun.ts)).limit(limit))).scalars()
+            )
 
     async def cache_markets(self, venue: str, markets: dict[str, dict]) -> None:
         async with self.db.session() as s:
@@ -475,5 +610,15 @@ class Repo:
     async def purge_mode_results(self, mode: TradingMode) -> None:
         """Used by 'Reset Paper Account' - clears results of one mode only."""
         async with self.db.session() as s:
-            for model in (Trade, Order, FillRow, OpportunityRow, PnlDaily, RiskEvent, BalanceSnapshot, Rebalance, ExecutionError):
+            for model in (
+                Trade,
+                Order,
+                FillRow,
+                OpportunityRow,
+                PnlDaily,
+                RiskEvent,
+                BalanceSnapshot,
+                Rebalance,
+                ExecutionError,
+            ):
                 await s.execute(delete(model).where(model.mode == mode.value))

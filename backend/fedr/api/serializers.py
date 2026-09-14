@@ -1,4 +1,5 @@
 """Compact JSON shapes for the UI - server-side aggregation, no raw market data streams."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -42,7 +43,13 @@ def opportunity_summary(o: Opportunity) -> dict:
         "created_at_ms": o.created_at_ms,
         "expires_at_ms": o.expires_at_ms,
         "flash_loan": bool(o.extra.get("flash_loan")),
-        "labels": {"gross": fmt_pct(p.gross_spread_pct), "expected": fmt_pct(p.expected_net_pct), "worst": fmt_pct(p.worst_case_pct), "expected_usd": fmt_money(p.expected_net_profit), "worst_usd": fmt_money(p.worst_case_profit)},
+        "labels": {
+            "gross": fmt_pct(p.gross_spread_pct),
+            "expected": fmt_pct(p.expected_net_pct),
+            "worst": fmt_pct(p.worst_case_pct),
+            "expected_usd": fmt_money(p.expected_net_profit),
+            "worst_usd": fmt_money(p.worst_case_profit),
+        },
     }
 
 
@@ -51,15 +58,53 @@ def opportunity_detail(o: Opportunity) -> dict:
     d = opportunity_summary(o)
     d.update(
         {
-            "buy": {"venue": o.buy.venue, "kind": o.buy.kind.value, "symbol": o.buy.symbol, "execution_price": money(o.buy.avg_price), "reference_price": money(o.buy.reference_price), "slippage_pct": money(o.buy.slippage_pct), "price_impact_pct": money(o.buy.price_impact_pct), "fee_pct": money(o.buy.fee_pct) if o.buy.fee_pct is not None else None, "fee_source": o.buy.fee_source, "route": o.buy.route, "fully_fillable": o.buy.fully_fillable, "levels": o.buy.levels_consumed, "age_ms": o.buy.age_ms, "quote_amount": money(o.buy.quote_amount), "chain": o.buy.chain.value if o.buy.chain else None},
-            "sell": {"venue": o.sell.venue, "kind": o.sell.kind.value, "symbol": o.sell.symbol, "execution_price": money(o.sell.avg_price), "reference_price": money(o.sell.reference_price), "slippage_pct": money(o.sell.slippage_pct), "price_impact_pct": money(o.sell.price_impact_pct), "fee_pct": money(o.sell.fee_pct) if o.sell.fee_pct is not None else None, "fee_source": o.sell.fee_source, "route": o.sell.route, "fully_fillable": o.sell.fully_fillable, "levels": o.sell.levels_consumed, "age_ms": o.sell.age_ms, "quote_amount": money(o.sell.quote_amount), "min_received": money(o.sell.min_received) if o.sell.min_received is not None else None, "chain": o.sell.chain.value if o.sell.chain else None},
+            "buy": {
+                "venue": o.buy.venue,
+                "kind": o.buy.kind.value,
+                "symbol": o.buy.symbol,
+                "execution_price": money(o.buy.avg_price),
+                "reference_price": money(o.buy.reference_price),
+                "slippage_pct": money(o.buy.slippage_pct),
+                "price_impact_pct": money(o.buy.price_impact_pct),
+                "fee_pct": money(o.buy.fee_pct) if o.buy.fee_pct is not None else None,
+                "fee_source": o.buy.fee_source,
+                "route": o.buy.route,
+                "fully_fillable": o.buy.fully_fillable,
+                "levels": o.buy.levels_consumed,
+                "age_ms": o.buy.age_ms,
+                "quote_amount": money(o.buy.quote_amount),
+                "chain": o.buy.chain.value if o.buy.chain else None,
+            },
+            "sell": {
+                "venue": o.sell.venue,
+                "kind": o.sell.kind.value,
+                "symbol": o.sell.symbol,
+                "execution_price": money(o.sell.avg_price),
+                "reference_price": money(o.sell.reference_price),
+                "slippage_pct": money(o.sell.slippage_pct),
+                "price_impact_pct": money(o.sell.price_impact_pct),
+                "fee_pct": money(o.sell.fee_pct) if o.sell.fee_pct is not None else None,
+                "fee_source": o.sell.fee_source,
+                "route": o.sell.route,
+                "fully_fillable": o.sell.fully_fillable,
+                "levels": o.sell.levels_consumed,
+                "age_ms": o.sell.age_ms,
+                "quote_amount": money(o.sell.quote_amount),
+                "min_received": money(o.sell.min_received) if o.sell.min_received is not None else None,
+                "chain": o.sell.chain.value if o.sell.chain else None,
+            },
             "costs": {k: money(Decimal(v)) for k, v in p.expected_costs.as_dict().items()},
             "worst_case_costs": {k: money(Decimal(v)) for k, v in p.worst_case_costs.as_dict().items()},
             "unknown_costs": p.expected_costs.unknown,
             "capital_required": money(p.capital_required),
             "required_roi_pct": money(p.required_min_roi_pct),
             "gas": to_jsonable(o.gas) if o.gas else None,
-            "risk": {"score": o.risk.score, "passed": o.risk.passed, "reasons": o.risk.reasons, "factors": to_jsonable(o.risk.factors)},
+            "risk": {
+                "score": o.risk.score,
+                "passed": o.risk.passed,
+                "reasons": o.risk.reasons,
+                "factors": to_jsonable(o.risk.factors),
+            },
             "alternatives": o.alternatives,
             "carry": o.extra.get("carry"),
             "experience_extra_pct": o.extra.get("experience_extra_pct"),
@@ -94,7 +139,9 @@ def trade_summary(t: TradeRecord) -> dict:
 
 def trade_detail(t: TradeRecord) -> dict:
     d = trade_summary(t)
-    d["legs"] = {k: to_jsonable(v) for k, v in (("buy", t.buy), ("sell", t.sell), ("hedge", t.hedge)) if v is not None}
+    d["legs"] = {
+        k: to_jsonable(v) for k, v in (("buy", t.buy), ("sell", t.sell), ("hedge", t.hedge)) if v is not None
+    }
     d["estimated_costs"] = t.estimated_costs
     d["events"] = t.events
     return d

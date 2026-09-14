@@ -1,4 +1,5 @@
 """FastAPI entrypoint: API under /api, UI served from fedr/static (SPA fallback)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from fedr.api.auth import AuthMiddleware
-from fedr.api.routes import backtest, dashboard, exchanges, history, opportunities, settings, system, trading, wallets
+from fedr.api.routes import (
+    backtest,
+    dashboard,
+    exchanges,
+    history,
+    opportunities,
+    settings,
+    system,
+    trading,
+    wallets,
+)
 from fedr.app import FedrApp
 from fedr.config.env import get_env
 
@@ -37,10 +48,23 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     env = get_env()
-    app = FastAPI(title="FEDR", version="0.1.0", lifespan=lifespan, docs_url="/api/docs" if env.log_level.upper() == "DEBUG" else None, redoc_url=None, openapi_url="/api/openapi.json" if env.log_level.upper() == "DEBUG" else None)
+    app = FastAPI(
+        title="FEDR",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/api/docs" if env.log_level.upper() == "DEBUG" else None,
+        redoc_url=None,
+        openapi_url="/api/openapi.json" if env.log_level.upper() == "DEBUG" else None,
+    )
     origins = [o.strip() for o in env.allowed_origins.split(",") if o.strip()]
     if origins:
-        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     app.add_middleware(AuthMiddleware, token=env.auth_token)
 
     @app.middleware("http")
@@ -49,7 +73,10 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        resp.headers.setdefault("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+        )
         return resp
 
     for r in (system, dashboard, opportunities, trading, wallets, exchanges, history, settings, backtest):
@@ -77,7 +104,9 @@ app = create_app()
 
 def run() -> None:
     env = get_env()
-    uvicorn.run("fedr.main:app", host=env.bind, port=env.port, log_level=env.log_level.lower(), proxy_headers=True)
+    uvicorn.run(
+        "fedr.main:app", host=env.bind, port=env.port, log_level=env.log_level.lower(), proxy_headers=True
+    )
 
 
 if __name__ == "__main__":

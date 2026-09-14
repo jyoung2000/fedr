@@ -1,10 +1,11 @@
 """Inventory manager: per venue / chain / wallet / asset view with reservations."""
+
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Callable
 
 from fedr.core.models import Balance
 from fedr.core.money import ZERO, D
@@ -36,7 +37,9 @@ class InventoryManager:
         self._lock = asyncio.Lock()
         self._targets: dict[tuple[str, str], tuple[Decimal, Decimal, Decimal | None]] = {}
 
-    def set_targets(self, venue: str, asset: str, target: Decimal, minimum: Decimal, maximum: Decimal | None) -> None:
+    def set_targets(
+        self, venue: str, asset: str, target: Decimal, minimum: Decimal, maximum: Decimal | None
+    ) -> None:
         self._targets[(venue, asset)] = (target, minimum, maximum)
 
     def update_balances(self, venue: str, balances: dict[str, Balance], kind: str = "cex") -> None:
@@ -62,13 +65,18 @@ class InventoryManager:
         return max(ZERO, line.available - self._reserved_for(venue, asset))
 
     def _reserved_for(self, venue: str, asset: str) -> Decimal:
-        return sum((amt for res in self._reservations.values() for v, a, amt in res if v == venue and a == asset), ZERO)
+        return sum(
+            (amt for res in self._reservations.values() for v, a, amt in res if v == venue and a == asset),
+            ZERO,
+        )
 
     async def reserve(self, trade_id: str, needs: list[tuple[str, str, Decimal]]) -> None:
         async with self._lock:
             for venue, asset, amount in needs:
                 if self.available(venue, asset) < amount:
-                    raise ValueError(f"insufficient {asset} on {venue}: need {amount}, available {self.available(venue, asset)}")
+                    raise ValueError(
+                        f"insufficient {asset} on {venue}: need {amount}, available {self.available(venue, asset)}"
+                    )
             self._reservations[trade_id] = [(v, a, D(x)) for v, a, x in needs]
 
     async def release(self, trade_id: str) -> None:
@@ -81,7 +89,9 @@ class InventoryManager:
     def balances_map(self) -> dict[tuple[str, str], Decimal]:
         return {k: self.available(*k) for k in self._lines}
 
-    def exposure_by(self, group: Callable[[InventoryLine], str | None], volatile_only: bool = True) -> dict[str, Decimal]:
+    def exposure_by(
+        self, group: Callable[[InventoryLine], str | None], volatile_only: bool = True
+    ) -> dict[str, Decimal]:
         out: dict[str, Decimal] = {}
         for line in self._lines.values():
             if line.usd_value is None:

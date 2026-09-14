@@ -38,11 +38,24 @@ def test_phrase_hash():
 
 
 def test_redaction_hides_keys_and_values():
-    payload = {"apiKey": "ABC123", "nested": {"secret": "s", "privateKey": "0x" + "a" * 64}, "note": "key 0x" + "b" * 64 + " leaked", "ok": "fine"}
+    payload = {
+        "apiKey": "ABC123",
+        "nested": {"secret": "s", "privateKey": "0x" + "a" * 64},
+        "note": "key 0x" + "b" * 64 + " leaked",
+        "ok": "fine",
+    }
     r = redact_value(payload)
-    assert r["apiKey"] == "[REDACTED]" and r["nested"]["secret"] == "[REDACTED]" and r["nested"]["privateKey"] == "[REDACTED]"
+    assert (
+        r["apiKey"] == "[REDACTED]"
+        and r["nested"]["secret"] == "[REDACTED]"
+        and r["nested"]["privateKey"] == "[REDACTED]"
+    )
     assert "b" * 64 not in r["note"] and r["ok"] == "fine"
-    ev = structlog_redactor(None, "info", {"event": "x", "authorization": "Bearer abcdefghijklmnopqrstuvwxyz", "mnemonic": "word word"})
+    ev = structlog_redactor(
+        None,
+        "info",
+        {"event": "x", "authorization": "Bearer abcdefghijklmnopqrstuvwxyz", "mnemonic": "word word"},
+    )
     assert ev["authorization"] == "[REDACTED]" and ev["mnemonic"] == "[REDACTED]"
     sol = "5" * 88
     assert "[REDACTED]" in redact_value(f"key {sol} end")

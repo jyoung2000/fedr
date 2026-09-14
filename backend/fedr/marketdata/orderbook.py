@@ -4,11 +4,12 @@ The Profit Guard never trades from best bid/ask. Every CEX leg is priced by
 walking the live book for the exact size, in the spirit of Hummingbot's
 ``OrderBook.get_vwap_for_volume`` / ``get_price_for_volume``.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Iterable, Sequence
 
 from fedr.core.enums import OrderSide
 from fedr.core.models import now_ms
@@ -58,9 +59,19 @@ class OrderBook:
         source: str = "rest",
         sequence: int | None = None,
     ) -> OrderBook:
-        b = sorted((Level(D(p), D(a)) for p, a, *_ in bids if D(a) > 0), key=lambda lv: lv.price, reverse=True)
+        b = sorted(
+            (Level(D(p), D(a)) for p, a, *_ in bids if D(a) > 0), key=lambda lv: lv.price, reverse=True
+        )
         a = sorted((Level(D(p), D(q)) for p, q, *_ in asks if D(q) > 0), key=lambda lv: lv.price)
-        return cls(venue=venue, symbol=symbol, bids=b, asks=a, ts_ms=ts_ms or now_ms(), source=source, sequence=sequence)
+        return cls(
+            venue=venue,
+            symbol=symbol,
+            bids=b,
+            asks=a,
+            ts_ms=ts_ms or now_ms(),
+            source=source,
+            sequence=sequence,
+        )
 
     # --- basics -----------------------------------------------------------------
     @property
@@ -198,7 +209,9 @@ class OrderBook:
             cum_base += lv.amount
             cum_quote += lv.amount * lv.price
             avg = cum_quote / cum_base
-            slip = pct(avg - reference, reference) if side is OrderSide.BUY else pct(reference - avg, reference)
+            slip = (
+                pct(avg - reference, reference) if side is OrderSide.BUY else pct(reference - avg, reference)
+            )
             if slip > max_slippage_pct:
                 # binary-ish search inside this level is overkill; stay conservative: stop at previous level
                 break

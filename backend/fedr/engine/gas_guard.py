@@ -1,4 +1,5 @@
 """GAS GUARD - dedicated gas economics + regime detection for on-chain legs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -63,7 +64,9 @@ class GasGuard:
         self.baseline = baseline or GasBaseline()
 
     # ---- estimation --------------------------------------------------------------------
-    def estimate_cost_usd(self, snap: GasSnapshot, gas_limit: int, compute_units: int | None = None) -> Decimal:
+    def estimate_cost_usd(
+        self, snap: GasSnapshot, gas_limit: int, compute_units: int | None = None
+    ) -> Decimal:
         """Expected USD cost of a transaction at the current conditions."""
         if snap.chain is Chain.SOLANA:
             cu = compute_units or gas_limit or 200_000
@@ -129,9 +132,13 @@ class GasGuard:
         else:
             priority_usd = snap.priority_fee_native * D(gas_limit) / GWEI * snap.native_usd * legs
             if snap.priority_fee_native > s.max_priority_fee_gwei:
-                reasons.append(f"priority fee {snap.priority_fee_native} gwei exceeds max {s.max_priority_fee_gwei} gwei")
+                reasons.append(
+                    f"priority fee {snap.priority_fee_native} gwei exceeds max {s.max_priority_fee_gwei} gwei"
+                )
             if snap.gas_price_native > s.max_gas_price_gwei:
-                reasons.append(f"gas price {snap.gas_price_native} gwei exceeds max {s.max_gas_price_gwei} gwei")
+                reasons.append(
+                    f"gas price {snap.gas_price_native} gwei exceeds max {s.max_gas_price_gwei} gwei"
+                )
         if expected > max_gas:
             reasons.append(f"expected gas {fmt_money(expected)} exceeds max per trade {fmt_money(max_gas)}")
         if stress > max_gas * s.stress_multiplier:

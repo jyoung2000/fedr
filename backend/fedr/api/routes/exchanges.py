@@ -20,7 +20,9 @@ def _connector_level(app, name: str) -> str:
         return ConnectorStatus.CONNECTED.value
     if not c.trading_enabled and app.mode.value in ("live", "testnet"):
         return ConnectorStatus.HEALTHY.value
-    if h.value == "healthy" and any(cand.buy.name == name or cand.sell.name == name for cand in app.opportunities.candidates()):
+    if h.value == "healthy" and any(
+        cand.buy.name == name or cand.sell.name == name for cand in app.opportunities.candidates()
+    ):
         return ConnectorStatus.ARBITRAGE_ELIGIBLE.value
     return ConnectorStatus.TRADEABLE.value if h.value == "healthy" else ConnectorStatus.HEALTHY.value
 
@@ -34,37 +36,89 @@ async def list_exchanges(app=Depends(require_app)):
         c = ctx.connectors.get(spec.id)
         h = ctx.health.get(spec.id)
         acct = accounts.get(spec.id)
-        cex.append({
-            "id": spec.id,
-            "display_name": spec.display_name,
-            "tier": spec.tier,
-            "sandbox": spec.sandbox,
-            "sandbox_note": spec.sandbox_note,
-            "perps": spec.perps,
-            "needs_password": spec.needs_password,
-            "auth_style": spec.auth_style,
-            "notes": spec.notes,
-            "verification": spec.verification.value,
-            "status": _connector_level(app, spec.id),
-            "connected": bool(c and c.connected),
-            "trading_enabled": bool(c and c.trading_enabled),
-            "health": ctx.venue_health(spec.id).value if c else "unknown",
-            "health_reasons": h.reasons if h else [],
-            "latency_ms": round(h.api_latency_ms) if h and h.api_latency_ms else None,
-            "ws": ctx.hub.stats.get(spec.id, {}).get("ws"),
-            "market_data_updates": ctx.hub.stats.get(spec.id, {}).get("updates", 0),
-            "markets": len(c.markets) if c else 0,
-            "last_error": c.last_error if c else None,
-            "account": {"id": acct.id, "label": acct.label, "mode": acct.mode, "enabled": acct.enabled, "sandbox": acct.sandbox, "status": acct.status, "permissions": acct.permissions, "last_error": acct.last_error, "last_verified_at": acct.last_verified_at.isoformat() if acct.last_verified_at else None} if acct else None,
-            "permissions": getattr(c, "permissions", None) if c else None,
-            "in_use": c is not None,
-        })
+        cex.append(
+            {
+                "id": spec.id,
+                "display_name": spec.display_name,
+                "tier": spec.tier,
+                "sandbox": spec.sandbox,
+                "sandbox_note": spec.sandbox_note,
+                "perps": spec.perps,
+                "needs_password": spec.needs_password,
+                "auth_style": spec.auth_style,
+                "notes": spec.notes,
+                "verification": spec.verification.value,
+                "status": _connector_level(app, spec.id),
+                "connected": bool(c and c.connected),
+                "trading_enabled": bool(c and c.trading_enabled),
+                "health": ctx.venue_health(spec.id).value if c else "unknown",
+                "health_reasons": h.reasons if h else [],
+                "latency_ms": round(h.api_latency_ms) if h and h.api_latency_ms else None,
+                "ws": ctx.hub.stats.get(spec.id, {}).get("ws"),
+                "market_data_updates": ctx.hub.stats.get(spec.id, {}).get("updates", 0),
+                "markets": len(c.markets) if c else 0,
+                "last_error": c.last_error if c else None,
+                "account": {
+                    "id": acct.id,
+                    "label": acct.label,
+                    "mode": acct.mode,
+                    "enabled": acct.enabled,
+                    "sandbox": acct.sandbox,
+                    "status": acct.status,
+                    "permissions": acct.permissions,
+                    "last_error": acct.last_error,
+                    "last_verified_at": acct.last_verified_at.isoformat() if acct.last_verified_at else None,
+                }
+                if acct
+                else None,
+                "permissions": getattr(c, "permissions", None) if c else None,
+                "in_use": c is not None,
+            }
+        )
     dex = []
     for spec in DEXES.values():
         c = ctx.connectors.get(spec.id)
         h = ctx.health.get(spec.id)
-        dex.append({"id": spec.id, "display_name": spec.display_name, "chain": spec.chain.value, "connector": spec.connector, "trading_type": spec.trading_type, "network": spec.network, "testnet_network": spec.testnet_network, "notes": spec.notes, "verification": spec.verification.value, "status": _connector_level(app, spec.id), "connected": bool(c and c.connected), "health": ctx.venue_health(spec.id).value if c else "unknown", "health_reasons": h.reasons if h else [], "in_use": c is not None, "last_error": c.last_error if c else None})
-    return {"cex": cex, "dex": dex, "gateway_ok": app.gateway_ok, "gateway_enabled": app.env.gateway_enabled, "mode": app.mode.value, "accounts": [{"id": a.id, "exchange_id": a.exchange_id, "label": a.label, "mode": a.mode, "enabled": a.enabled, "sandbox": a.sandbox, "status": a.status, "permissions": a.permissions, "last_error": a.last_error} for a in app.exchange_accounts]}
+        dex.append(
+            {
+                "id": spec.id,
+                "display_name": spec.display_name,
+                "chain": spec.chain.value,
+                "connector": spec.connector,
+                "trading_type": spec.trading_type,
+                "network": spec.network,
+                "testnet_network": spec.testnet_network,
+                "notes": spec.notes,
+                "verification": spec.verification.value,
+                "status": _connector_level(app, spec.id),
+                "connected": bool(c and c.connected),
+                "health": ctx.venue_health(spec.id).value if c else "unknown",
+                "health_reasons": h.reasons if h else [],
+                "in_use": c is not None,
+                "last_error": c.last_error if c else None,
+            }
+        )
+    return {
+        "cex": cex,
+        "dex": dex,
+        "gateway_ok": app.gateway_ok,
+        "gateway_enabled": app.env.gateway_enabled,
+        "mode": app.mode.value,
+        "accounts": [
+            {
+                "id": a.id,
+                "exchange_id": a.exchange_id,
+                "label": a.label,
+                "mode": a.mode,
+                "enabled": a.enabled,
+                "sandbox": a.sandbox,
+                "status": a.status,
+                "permissions": a.permissions,
+                "last_error": a.last_error,
+            }
+            for a in app.exchange_accounts
+        ],
+    }
 
 
 class AccountBody(BaseModel):
@@ -82,7 +136,14 @@ class AccountBody(BaseModel):
 
 @router.post("/exchanges/accounts")
 async def add_account(body: AccountBody, app=Depends(require_app)):
-    creds = {"apiKey": body.api_key, "secret": body.secret, "password": body.password, "uid": body.uid, "walletAddress": body.wallet_address, "privateKey": body.private_key}
+    creds = {
+        "apiKey": body.api_key,
+        "secret": body.secret,
+        "password": body.password,
+        "uid": body.uid,
+        "walletAddress": body.wallet_address,
+        "privateKey": body.private_key,
+    }
     try:
         return await app.add_exchange_account(body.exchange_id, body.label, creds, body.mode, body.sandbox)
     except ValueError as exc:
@@ -133,4 +194,8 @@ async def permissions(venue: str, app=Depends(require_app)):
     c = app.ctx.connectors.get(venue)
     if c is None:
         raise HTTPException(404, "venue not active")
-    return {"venue": venue, "permissions": getattr(c, "permissions", {}), "note": "READ verified by fetching balances; TRADE is verified by the first successful order; WITHDRAW can only be verified on venues exposing key restrictions (Binance). Never enable withdrawal permission on trading keys."}
+    return {
+        "venue": venue,
+        "permissions": getattr(c, "permissions", {}),
+        "note": "READ verified by fetching balances; TRADE is verified by the first successful order; WITHDRAW can only be verified on venues exposing key restrictions (Binance). Never enable withdrawal permission on trading keys.",
+    }

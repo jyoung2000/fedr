@@ -4,6 +4,7 @@ These are the in-memory objects the engines exchange. They are deliberately
 plain dataclasses (not ORM models) so the engine stays testable without a
 database. Persistence mapping lives in ``fedr.db``.
 """
+
 from __future__ import annotations
 
 import time

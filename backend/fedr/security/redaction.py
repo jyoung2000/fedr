@@ -1,4 +1,5 @@
 """Log redaction: secrets must never be written to logs."""
+
 from __future__ import annotations
 
 import re
@@ -24,11 +25,15 @@ def redact_value(value: Any) -> Any:
             out = rx.sub("[REDACTED]", out)
         return out
     if isinstance(value, dict):
-        return {k: ("[REDACTED]" if _SENSITIVE_KEYS.search(str(k)) else redact_value(v)) for k, v in value.items()}
+        return {
+            k: ("[REDACTED]" if _SENSITIVE_KEYS.search(str(k)) else redact_value(v)) for k, v in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [redact_value(v) for v in value]
     return value
 
 
 def structlog_redactor(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    return {k: ("[REDACTED]" if _SENSITIVE_KEYS.search(k) else redact_value(v)) for k, v in event_dict.items()}
+    return {
+        k: ("[REDACTED]" if _SENSITIVE_KEYS.search(k) else redact_value(v)) for k, v in event_dict.items()
+    }

@@ -10,12 +10,14 @@ Honesty notes
 * Withdrawal permission is never required; it can only be verified on venues
   that expose key restrictions (Binance) - elsewhere the UI asks the user.
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from decimal import Decimal
-from typing import Any, AsyncIterator
+from typing import Any
 
 import ccxt.async_support as ccxt_async
 import ccxt.pro as ccxtpro
@@ -44,7 +46,8 @@ from fedr.connectors.base import (
     VenueConnector,
     VenueUnavailable,
 )
-from fedr.connectors.cex.registry import ExchangeSpec, spec as get_spec
+from fedr.connectors.cex.registry import ExchangeSpec
+from fedr.connectors.cex.registry import spec as get_spec
 from fedr.core.enums import OrderSide, OrderStatus, TradingMode, VenueKind
 from fedr.core.logging import get_logger
 from fedr.core.models import (
@@ -188,7 +191,9 @@ class CcxtConnector(VenueConnector):
         finally:
             self.health_tracker.record_latency((time.perf_counter() - t0) * 1000)
         # Withdrawal restriction check where the exchange exposes it (Binance family)
-        if self.exchange_id in ("binance", "binanceus") and hasattr(self.exchange, "sapiGetAccountApiRestrictions"):
+        if self.exchange_id in ("binance", "binanceus") and hasattr(
+            self.exchange, "sapiGetAccountApiRestrictions"
+        ):
             try:
                 r = await self.exchange.sapiGetAccountApiRestrictions()
                 self.permissions["withdraw"] = bool(r.get("enableWithdrawals"))
@@ -269,7 +274,15 @@ class CcxtConnector(VenueConnector):
             raise _map_error(exc) from exc
         finally:
             self.health_tracker.record_latency((time.perf_counter() - t0) * 1000)
-        ob = OrderBook.from_raw(self.name, symbol, raw["bids"], raw["asks"], ts_ms=raw.get("timestamp") or now_ms(), source="rest", sequence=raw.get("nonce"))
+        ob = OrderBook.from_raw(
+            self.name,
+            symbol,
+            raw["bids"],
+            raw["asks"],
+            ts_ms=raw.get("timestamp") or now_ms(),
+            source="rest",
+            sequence=raw.get("nonce"),
+        )
         self.health_tracker.last_market_data_ms = now_ms()
         return ob
 
@@ -287,9 +300,19 @@ class CcxtConnector(VenueConnector):
                 raise VenueUnavailable(f"websocket error: {exc}") from exc
             self.health_tracker.ws_connected = True
             self.health_tracker.last_market_data_ms = now_ms()
-            yield OrderBook.from_raw(self.name, symbol, list(raw["bids"])[:depth], list(raw["asks"])[:depth], ts_ms=raw.get("timestamp") or now_ms(), source="ws", sequence=raw.get("nonce"))
+            yield OrderBook.from_raw(
+                self.name,
+                symbol,
+                list(raw["bids"])[:depth],
+                list(raw["asks"])[:depth],
+                ts_ms=raw.get("timestamp") or now_ms(),
+                source="ws",
+                sequence=raw.get("nonce"),
+            )
 
-    async def get_quote(self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None) -> ExecutionQuote:
+    async def get_quote(
+        self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None
+    ) -> ExecutionQuote:
         ob = order_book or await self.fetch_order_book(symbol)
         fee = await self.fetch_fees(symbol)
         w = ob.walk(side, base_amount)
@@ -312,7 +335,11 @@ class CcxtConnector(VenueConnector):
             route=f"{self.display_name} order book ({w.levels_consumed} levels)",
             levels_consumed=w.levels_consumed,
             depth_available_base=w.depth_available_base,
-            extra={"limit_price": str(w.last_price), "taker_fee_pct": str(fee.taker_pct) if fee.taker_pct is not None else None, "min_amount": str(m.min_amount) if m else None},
+            extra={
+                "limit_price": str(w.last_price),
+                "taker_fee_pct": str(fee.taker_pct) if fee.taker_pct is not None else None,
+                "min_amount": str(m.min_amount) if m else None,
+            },
         )
 
     # ------------------------------------------------------------------ fees
@@ -326,11 +353,19 @@ class CcxtConnector(VenueConnector):
                     fees = await self.exchange.fetch_trading_fees()
                     for sym, f in fees.items():
                         if f.get("taker") is not None:
-                            self._fee_cache[sym] = FeeSchedule(D(f["taker"]) * 100, D(f["maker"]) * 100 if f.get("maker") is not None else None, "exchange_api")
+                            self._fee_cache[sym] = FeeSchedule(
+                                D(f["taker"]) * 100,
+                                D(f["maker"]) * 100 if f.get("maker") is not None else None,
+                                "exchange_api",
+                            )
                 elif self.exchange.has.get("fetchTradingFee"):
                     f = await self.exchange.fetch_trading_fee(symbol)
                     if f.get("taker") is not None:
-                        self._fee_cache[symbol] = FeeSchedule(D(f["taker"]) * 100, D(f["maker"]) * 100 if f.get("maker") is not None else None, "exchange_api")
+                        self._fee_cache[symbol] = FeeSchedule(
+                            D(f["taker"]) * 100,
+                            D(f["maker"]) * 100 if f.get("maker") is not None else None,
+                            "exchange_api",
+                        )
                 self._fees_fetched_at = now_ms()
             except Exception as exc:
                 log.warning("fee fetch failed", venue=self.name, error=str(exc))
@@ -341,7 +376,9 @@ class CcxtConnector(VenueConnector):
         if m and m.taker_fee_pct is not None:
             fs = FeeSchedule(m.taker_fee_pct, m.maker_fee_pct, "market_metadata")
         elif self.spec and self.spec.fallback_taker_pct is not None:
-            fs = FeeSchedule(self.spec.fallback_taker_pct, self.spec.fallback_maker_pct, "documented_fallback")
+            fs = FeeSchedule(
+                self.spec.fallback_taker_pct, self.spec.fallback_maker_pct, "documented_fallback"
+            )
         else:
             fs = FeeSchedule(None, None, "unknown")
         self._fee_cache[symbol] = fs
@@ -367,7 +404,9 @@ class CcxtConnector(VenueConnector):
         self.health_tracker.last_balance_ms = now_ms()
         return out
 
-    def _quantize(self, symbol: str, amount: Decimal, price: Decimal | None, side: OrderSide = OrderSide.BUY) -> tuple[Decimal, Decimal | None]:
+    def _quantize(
+        self, symbol: str, amount: Decimal, price: Decimal | None, side: OrderSide = OrderSide.BUY
+    ) -> tuple[Decimal, Decimal | None]:
         m = self.markets.get(symbol)
         if m is None:
             return amount, price
@@ -376,7 +415,11 @@ class CcxtConnector(VenueConnector):
             raise OrderRejected(f"amount {amt} below minimum {m.min_amount} on {self.name}")
         if price is not None:
             # conservative rounding: a buy limit rounds down, a sell limit rounds up (never loosens the limit)
-            price = floor_to_step(price, m.price_step) if side is OrderSide.BUY else ceil_to_step(price, m.price_step)
+            price = (
+                floor_to_step(price, m.price_step)
+                if side is OrderSide.BUY
+                else ceil_to_step(price, m.price_step)
+            )
         if price is not None and m.min_cost and amt * price < m.min_cost:
             raise OrderRejected(f"order cost {amt * price} below minimum {m.min_cost} on {self.name}")
         return amt, price
@@ -394,11 +437,15 @@ class CcxtConnector(VenueConnector):
         t0 = time.perf_counter()
         try:
             try:
-                raw = await self.exchange.create_order(req.symbol, "limit", req.side.value, float(amount), float(price), params)
+                raw = await self.exchange.create_order(
+                    req.symbol, "limit", req.side.value, float(amount), float(price), params
+                )
             except InvalidOrder as exc:
                 if "timeInForce" in str(exc) or "time in force" in str(exc).lower():
                     params.pop("timeInForce", None)
-                    raw = await self.exchange.create_order(req.symbol, "limit", req.side.value, float(amount), float(price), params)
+                    raw = await self.exchange.create_order(
+                        req.symbol, "limit", req.side.value, float(amount), float(price), params
+                    )
                     result.raw["ioc_fallback"] = True
                 else:
                     raise
@@ -437,7 +484,9 @@ class CcxtConnector(VenueConnector):
         if result.filled > 0 and not result.fills:
             await self._load_fills(result)
         result.completed_at_ms = now_ms()
-        self.health_tracker.record_order(result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED, OrderStatus.CANCELLED))
+        self.health_tracker.record_order(
+            result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED, OrderStatus.CANCELLED)
+        )
         if result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
             self.permissions["trade"] = True
         return result
@@ -463,7 +512,11 @@ class CcxtConnector(VenueConnector):
         if status is OrderStatus.FILLED or (raw.get("remaining") == 0 and filled > 0):
             result.status = OrderStatus.FILLED
         elif status in (OrderStatus.CANCELLED, OrderStatus.EXPIRED, OrderStatus.REJECTED):
-            result.status = OrderStatus.PARTIALLY_FILLED if result.filled > 0 and status is not OrderStatus.REJECTED else status
+            result.status = (
+                OrderStatus.PARTIALLY_FILLED
+                if result.filled > 0 and status is not OrderStatus.REJECTED
+                else status
+            )
             if status is OrderStatus.CANCELLED and result.filled > 0:
                 result.status = OrderStatus.PARTIALLY_FILLED
         elif status is OrderStatus.OPEN:
@@ -475,7 +528,9 @@ class CcxtConnector(VenueConnector):
             result.fee_quote = self._fees_in_quote(result)
         elif raw.get("fee") and raw["fee"].get("cost") is not None and not result.fills:
             result.raw["fee"] = raw["fee"]
-        result.raw["last"] = {k: raw.get(k) for k in ("id", "status", "filled", "remaining", "average", "cost", "fee")}
+        result.raw["last"] = {
+            k: raw.get(k) for k in ("id", "status", "filled", "remaining", "average", "cost", "fee")
+        }
 
     def _fill_from_trade(self, result: OrderResult, t: dict) -> Fill:
         fee = t.get("fee") or {}
@@ -494,7 +549,9 @@ class CcxtConnector(VenueConnector):
 
     async def _load_fills(self, result: OrderResult) -> None:
         try:
-            trades = await self.exchange.fetch_my_trades(result.request.symbol, since=result.submitted_at_ms - 60_000, limit=100)
+            trades = await self.exchange.fetch_my_trades(
+                result.request.symbol, since=result.submitted_at_ms - 60_000, limit=100
+            )
         except Exception as exc:
             log.warning("fetch_my_trades failed", venue=self.name, error=str(exc))
             return
@@ -508,12 +565,18 @@ class CcxtConnector(VenueConnector):
                 result.avg_price = sum((f.amount * f.price for f in result.fills), ZERO) / total
         elif result.raw.get("fee"):
             fee = result.raw["fee"]
-            result.fee_quote = self._fee_to_quote(D(fee.get("cost") or 0), str(fee.get("currency") or ""), result)
+            result.fee_quote = self._fee_to_quote(
+                D(fee.get("cost") or 0), str(fee.get("currency") or ""), result
+            )
 
     def _fees_in_quote(self, result: OrderResult) -> Decimal:
-        return sum((self._fee_to_quote(f.fee_amount, f.fee_asset, result, f.price) for f in result.fills), ZERO)
+        return sum(
+            (self._fee_to_quote(f.fee_amount, f.fee_asset, result, f.price) for f in result.fills), ZERO
+        )
 
-    def _fee_to_quote(self, amount: Decimal, asset: str, result: OrderResult, price: Decimal | None = None) -> Decimal:
+    def _fee_to_quote(
+        self, amount: Decimal, asset: str, result: OrderResult, price: Decimal | None = None
+    ) -> Decimal:
         m = self.markets.get(result.request.symbol)
         if m is None or amount == 0:
             return amount
@@ -545,7 +608,13 @@ class CcxtConnector(VenueConnector):
         raw = await self._fetch_raw_order(order_id, symbol)
         if raw is None:
             return None
-        req = OrderRequest(venue=self.name, symbol=symbol, side=OrderSide(raw.get("side") or "buy"), amount=D(raw.get("amount") or 0), limit_price=D(raw["price"]) if raw.get("price") else None)
+        req = OrderRequest(
+            venue=self.name,
+            symbol=symbol,
+            side=OrderSide(raw.get("side") or "buy"),
+            amount=D(raw.get("amount") or 0),
+            limit_price=D(raw["price"]) if raw.get("price") else None,
+        )
         res = OrderResult(request=req, order_id=order_id, status=OrderStatus.OPEN)
         self._apply_order(res, raw)
         return res
@@ -593,7 +662,11 @@ class CcxtConnector(VenueConnector):
 
     async def health_check(self) -> HealthReport:
         if self.exchange is None:
-            return HealthReport(venue=self.name, health=__import__("fedr.core.enums", fromlist=["VenueHealth"]).VenueHealth.UNHEALTHY, reasons=["not connected"])
+            return HealthReport(
+                venue=self.name,
+                health=__import__("fedr.core.enums", fromlist=["VenueHealth"]).VenueHealth.UNHEALTHY,
+                reasons=["not connected"],
+            )
         t0 = time.perf_counter()
         try:
             if self.exchange.has.get("fetchStatus"):
@@ -611,5 +684,13 @@ class CcxtConnector(VenueConnector):
 
     def status_dict(self) -> dict:
         d = super().status_dict()
-        d.update({"exchange_id": self.exchange_id, "sandbox": self.sandbox, "permissions": self.permissions, "market_type": self.market_type, "has_credentials": bool(self.credentials)})
+        d.update(
+            {
+                "exchange_id": self.exchange_id,
+                "sandbox": self.sandbox,
+                "permissions": self.permissions,
+                "market_type": self.market_type,
+                "has_credentials": bool(self.credentials),
+            }
+        )
         return d

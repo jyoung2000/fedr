@@ -5,6 +5,7 @@ AES-256-GCM with a per-installation master key. The master key comes from the
 ``<data_dir>/config/master.key`` (mode 0600). Ciphertext is versioned so the
 scheme can be rotated later.
 """
+
 from __future__ import annotations
 
 import base64

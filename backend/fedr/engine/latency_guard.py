@@ -1,4 +1,5 @@
 """LATENCY GUARD - timestamps for every stage; stale opportunities are rejected."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -31,8 +32,12 @@ class Timeline:
             "decision_ts_ms": self.decision_ts_ms,
             "submission_ts_ms": self.submission_ts_ms,
             "fill_ts_ms": self.fill_ts_ms,
-            "data_to_decision_ms": (self.decision_ts_ms - self.market_data_ts_ms) if self.decision_ts_ms else 0,
-            "decision_to_submit_ms": (self.submission_ts_ms - self.decision_ts_ms) if self.submission_ts_ms else 0,
+            "data_to_decision_ms": (self.decision_ts_ms - self.market_data_ts_ms)
+            if self.decision_ts_ms
+            else 0,
+            "decision_to_submit_ms": (self.submission_ts_ms - self.decision_ts_ms)
+            if self.submission_ts_ms
+            else 0,
             "submit_to_fill_ms": (self.fill_ts_ms - self.submission_ts_ms) if self.fill_ts_ms else 0,
         }
 

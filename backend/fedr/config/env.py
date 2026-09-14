@@ -4,6 +4,7 @@ Only *infrastructure* settings live here (ports, paths, keys, endpoints).
 Everything a user changes in the UI is an ``AppSettings`` document persisted in
 the database (see ``fedr.config.schema``).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -88,7 +89,16 @@ class EnvSettings(BaseSettings):
         return getattr(self, f"flashloan_contract_{chain}", None)
 
     def ensure_dirs(self) -> None:
-        for sub in ("database", "config", "wallets", "strategies", "logs", "backups", "market-data", "reports"):
+        for sub in (
+            "database",
+            "config",
+            "wallets",
+            "strategies",
+            "logs",
+            "backups",
+            "market-data",
+            "reports",
+        ):
             (self.data_dir / sub).mkdir(parents=True, exist_ok=True)
 
 

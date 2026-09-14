@@ -14,7 +14,10 @@ async def list_opportunities(app=Depends(require_app), include_blocked: bool = T
     opps = app.opportunities.ranked()
     if not include_blocked:
         opps = [o for o in opps if o.is_executable]
-    return {"items": [opportunity_summary(o) for o in opps[:limit]], "scan": {"count": app.opportunities.scan_count, "last_ms": app.opportunities.last_scan_ms}}
+    return {
+        "items": [opportunity_summary(o) for o in opps[:limit]],
+        "scan": {"count": app.opportunities.scan_count, "last_ms": app.opportunities.last_scan_ms},
+    }
 
 
 @router.get("/opportunities/{opp_id}")
@@ -38,7 +41,9 @@ async def execute(opp_id: str, app=Depends(require_app)):
     if o is None:
         raise HTTPException(404, "opportunity expired - wait for the next scan")
     if app.settings.general.shadow_mode:
-        raise HTTPException(400, "shadow mode is on: nothing is submitted. Turn shadow mode off in Trading to execute.")
+        raise HTTPException(
+            400, "shadow mode is on: nothing is submitted. Turn shadow mode off in Trading to execute."
+        )
     if o.strategy is Strategy.FLASH_LOAN:
         tr = await app.flashloan.execute(o, app.opportunities, trigger="manual")
     else:

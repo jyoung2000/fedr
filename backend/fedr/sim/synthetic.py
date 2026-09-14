@@ -6,6 +6,7 @@ reconciliation) can be exercised without network access. It is never used in
 PAPER, TESTNET or LIVE modes and every quote it produces is tagged
 ``source="synthetic"``.
 """
+
 from __future__ import annotations
 
 import math
@@ -18,7 +19,14 @@ from fedr.core.models import now_ms
 from fedr.core.money import D
 from fedr.marketdata.orderbook import Level, OrderBook
 
-BASE_PRICES = {"BTC": Decimal("64000"), "ETH": Decimal("3200"), "SOL": Decimal("150"), "USDC": Decimal("1"), "USDT": Decimal("1"), "USD": Decimal("1")}
+BASE_PRICES = {
+    "BTC": Decimal("64000"),
+    "ETH": Decimal("3200"),
+    "SOL": Decimal("150"),
+    "USDC": Decimal("1"),
+    "USDT": Decimal("1"),
+    "USD": Decimal("1"),
+}
 QUOTE_USD = {"USDC": Decimal("1"), "USDT": Decimal("0.9998"), "USD": Decimal("1")}
 
 
@@ -51,7 +59,9 @@ class ChainProfile:
 
 
 class SyntheticMarket:
-    def __init__(self, pairs: list[str], venues: list[VenueProfile], chains: list[ChainProfile], seed: int = 42):
+    def __init__(
+        self, pairs: list[str], venues: list[VenueProfile], chains: list[ChainProfile], seed: int = 42
+    ):
         self.rng = random.Random(seed)
         self.pairs = pairs
         self.venues = {v.name: v for v in venues}
@@ -122,16 +132,35 @@ class SyntheticMarket:
             quote_in = reserve_quote * amt / (reserve_base - amt) / (1 - fee)
             eff = quote_in / amt
             impact = (eff * (1 - fee) - spot) / spot * 100
-            return {"ok": True, "quote_amount": D(round(quote_in, 8)), "avg_price": D(round(eff, 8)), "reference": D(round(spot, 8)), "impact_pct": D(round(max(0.0, impact), 6)), "fee_pct": v.pool_fee_pct}
+            return {
+                "ok": True,
+                "quote_amount": D(round(quote_in, 8)),
+                "avg_price": D(round(eff, 8)),
+                "reference": D(round(spot, 8)),
+                "impact_pct": D(round(max(0.0, impact), 6)),
+                "fee_pct": v.pool_fee_pct,
+            }
         base_in_after_fee = amt * (1 - fee)
         quote_out = reserve_quote * base_in_after_fee / (reserve_base + base_in_after_fee)
         eff = quote_out / amt
         impact = (spot - eff / (1 - fee)) / spot * 100
-        return {"ok": True, "quote_amount": D(round(quote_out, 8)), "avg_price": D(round(eff, 8)), "reference": D(round(spot, 8)), "impact_pct": D(round(max(0.0, impact), 6)), "fee_pct": v.pool_fee_pct}
+        return {
+            "ok": True,
+            "quote_amount": D(round(quote_out, 8)),
+            "avg_price": D(round(eff, 8)),
+            "reference": D(round(spot, 8)),
+            "impact_pct": D(round(max(0.0, impact), 6)),
+            "fee_pct": v.pool_fee_pct,
+        }
 
     def gas(self, chain: Chain) -> dict:
         c = self.chains[chain]
-        return {"gas_price": D(round(c.current, 6)), "priority": D(round(c.priority, 6)), "native_usd": c.native_usd, "baseline": D(round(c.base_gas, 6))}
+        return {
+            "gas_price": D(round(c.current, 6)),
+            "priority": D(round(c.priority, 6)),
+            "native_usd": c.native_usd,
+            "baseline": D(round(c.base_gas, 6)),
+        }
 
     def price_usd(self, asset: str) -> Decimal | None:
         if asset in QUOTE_USD:
@@ -144,23 +173,93 @@ class SyntheticMarket:
 
 def default_synthetic(pairs: list[str], seed: int = 42) -> SyntheticMarket:
     venues = [
-        VenueProfile("kraken", "cex", offset_bps=-2.0, spread_bps=5.0, depth_scale=1.2, dislocation_prob=0.05, dislocation_bps=70),
-        VenueProfile("coinbase", "cex", offset_bps=3.0, spread_bps=4.0, depth_scale=1.5, dislocation_prob=0.05, dislocation_bps=70),
-        VenueProfile("binance", "cex", offset_bps=0.0, spread_bps=2.0, depth_scale=3.0, dislocation_prob=0.03, dislocation_bps=45),
-        VenueProfile("jupiter", "dex", offset_bps=6.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.07, dislocation_bps=110, chain=Chain.SOLANA, pool_fee_pct=Decimal("0.25"), pool_liquidity_usd=3_000_000),
-        VenueProfile("uniswap-base", "dex", offset_bps=-4.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.07, dislocation_bps=110, chain=Chain.BASE, pool_fee_pct=Decimal("0.30"), pool_liquidity_usd=1_500_000),
-        VenueProfile("uniswap-arbitrum", "dex", offset_bps=2.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.06, dislocation_bps=100, chain=Chain.ARBITRUM, pool_fee_pct=Decimal("0.05"), pool_liquidity_usd=2_500_000),
+        VenueProfile(
+            "kraken",
+            "cex",
+            offset_bps=-2.0,
+            spread_bps=5.0,
+            depth_scale=1.2,
+            dislocation_prob=0.05,
+            dislocation_bps=70,
+        ),
+        VenueProfile(
+            "coinbase",
+            "cex",
+            offset_bps=3.0,
+            spread_bps=4.0,
+            depth_scale=1.5,
+            dislocation_prob=0.05,
+            dislocation_bps=70,
+        ),
+        VenueProfile(
+            "binance",
+            "cex",
+            offset_bps=0.0,
+            spread_bps=2.0,
+            depth_scale=3.0,
+            dislocation_prob=0.03,
+            dislocation_bps=45,
+        ),
+        VenueProfile(
+            "jupiter",
+            "dex",
+            offset_bps=6.0,
+            spread_bps=0.0,
+            vol_bps=6.0,
+            dislocation_prob=0.07,
+            dislocation_bps=110,
+            chain=Chain.SOLANA,
+            pool_fee_pct=Decimal("0.25"),
+            pool_liquidity_usd=3_000_000,
+        ),
+        VenueProfile(
+            "uniswap-base",
+            "dex",
+            offset_bps=-4.0,
+            spread_bps=0.0,
+            vol_bps=6.0,
+            dislocation_prob=0.07,
+            dislocation_bps=110,
+            chain=Chain.BASE,
+            pool_fee_pct=Decimal("0.30"),
+            pool_liquidity_usd=1_500_000,
+        ),
+        VenueProfile(
+            "uniswap-arbitrum",
+            "dex",
+            offset_bps=2.0,
+            spread_bps=0.0,
+            vol_bps=6.0,
+            dislocation_prob=0.06,
+            dislocation_bps=100,
+            chain=Chain.ARBITRUM,
+            pool_fee_pct=Decimal("0.05"),
+            pool_liquidity_usd=2_500_000,
+        ),
     ]
     chains = [
-        ChainProfile(Chain.SOLANA, base_gas=0.05, priority=0.05, native_usd=BASE_PRICES["SOL"]),  # lamports per CU
+        ChainProfile(
+            Chain.SOLANA, base_gas=0.05, priority=0.05, native_usd=BASE_PRICES["SOL"]
+        ),  # lamports per CU
         ChainProfile(Chain.BASE, base_gas=0.01, priority=0.001, native_usd=BASE_PRICES["ETH"]),  # gwei
         ChainProfile(Chain.ARBITRUM, base_gas=0.02, priority=0.001, native_usd=BASE_PRICES["ETH"]),
-        ChainProfile(Chain.ETHEREUM, base_gas=12.0, priority=1.0, native_usd=BASE_PRICES["ETH"], spike_prob=0.04),
+        ChainProfile(
+            Chain.ETHEREUM, base_gas=12.0, priority=1.0, native_usd=BASE_PRICES["ETH"], spike_prob=0.04
+        ),
     ]
     return SyntheticMarket(pairs, venues, chains, seed=seed)
 
 
-DEX_NATIVE_BASES = {Chain.SOLANA: {"SOL"}, Chain.BASE: {"ETH"}, Chain.ARBITRUM: {"ETH"}, Chain.ETHEREUM: {"ETH", "BTC"}, Chain.OPTIMISM: {"ETH"}, Chain.POLYGON: {"ETH", "POL"}, Chain.BSC: {"BNB", "ETH"}, Chain.AVALANCHE: {"AVAX", "ETH"}}
+DEX_NATIVE_BASES = {
+    Chain.SOLANA: {"SOL"},
+    Chain.BASE: {"ETH"},
+    Chain.ARBITRUM: {"ETH"},
+    Chain.ETHEREUM: {"ETH", "BTC"},
+    Chain.OPTIMISM: {"ETH"},
+    Chain.POLYGON: {"ETH", "POL"},
+    Chain.BSC: {"BNB", "ETH"},
+    Chain.AVALANCHE: {"AVAX", "ETH"},
+}
 
 
 def dex_pairs_for(chain: Chain, pairs: list[str]) -> list[str]:

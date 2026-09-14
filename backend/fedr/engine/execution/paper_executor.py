@@ -9,12 +9,13 @@ charged to the chain's native balance for DEX legs.
 Paper legs go through the SAME Profit Guard / Risk Engine as live legs - this
 module only replaces the venue's order placement.
 """
+
 from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Callable
 
 from fedr.config.schema import PaperSettings
 from fedr.connectors.base import VenueConnector
@@ -40,7 +41,7 @@ class PaperExecutor:
         gas_snapshot: Callable[[Chain], GasSnapshot | None],
         gas_guard: GasGuard | None = None,
         rng: random.Random | None = None,
-        sleep: Callable[[float], "asyncio.Future"] | None = None,
+        sleep: Callable[[float], asyncio.Future] | None = None,
     ):
         self.ledger = ledger
         self.settings = settings
@@ -49,7 +50,9 @@ class PaperExecutor:
         self.rng = rng or random.Random()
         self._sleep = sleep or asyncio.sleep
 
-    async def execute_leg(self, connector: VenueConnector, req: OrderRequest, quote: ExecutionQuote) -> OrderResult:
+    async def execute_leg(
+        self, connector: VenueConnector, req: OrderRequest, quote: ExecutionQuote
+    ) -> OrderResult:
         ps = self.settings()
         result = OrderResult(request=req, order_id=new_id("paper"), status=OrderStatus.NEW)
         base, quote_asset = req.symbol.split("/")
@@ -68,7 +71,9 @@ class PaperExecutor:
         # 3. fresh execution at arrival time (adverse drift + stress)
         stress = D(ps.stress_multiplier)
         drift = D(ps.quote_drift_pct) / HUNDRED
-        fill_base, avg_price, gas_usd, gas_native = await self._simulate_fill(connector, req, quote, stress, drift)
+        fill_base, avg_price, gas_usd, gas_native = await self._simulate_fill(
+            connector, req, quote, stress, drift
+        )
         if fill_base <= 0:
             result.status = OrderStatus.CANCELLED
             result.error = "IOC not fillable within limit price after simulated latency"
@@ -84,7 +89,9 @@ class PaperExecutor:
         fee_quote = quote_amount * fee_pct / HUNDRED if connector.kind is not VenueKind.DEX else ZERO
         # 5. settle ledger
         try:
-            await self.ledger.settle_fill(lv, base, quote_asset, req.side, fill_base, quote_amount, fee_quote, reserved=True)
+            await self.ledger.settle_fill(
+                lv, base, quote_asset, req.side, fill_base, quote_amount, fee_quote, reserved=True
+            )
             if connector.kind is VenueKind.DEX and connector.chain is not None and gas_native > 0:
                 await self.ledger.charge_gas(lv, connector.chain.native_token, gas_native)
         except ValueError as exc:
@@ -94,7 +101,18 @@ class PaperExecutor:
             connector.health_tracker.record_order(False)
             return result
         result.fills.append(
-            Fill(order_id=result.order_id, venue=connector.name, symbol=req.symbol, side=req.side, amount=fill_base, price=avg_price, fee_amount=fee_quote, fee_asset=quote_asset, gas_cost_usd=gas_usd, tx_hash=f"paper-{result.order_id}" if connector.kind is VenueKind.DEX else None)
+            Fill(
+                order_id=result.order_id,
+                venue=connector.name,
+                symbol=req.symbol,
+                side=req.side,
+                amount=fill_base,
+                price=avg_price,
+                fee_amount=fee_quote,
+                fee_asset=quote_asset,
+                gas_cost_usd=gas_usd,
+                tx_hash=f"paper-{result.order_id}" if connector.kind is VenueKind.DEX else None,
+            )
         )
         result.filled = fill_base
         result.avg_price = avg_price
@@ -102,11 +120,22 @@ class PaperExecutor:
         result.gas_cost_usd = gas_usd
         result.status = OrderStatus.FILLED if fill_base >= req.amount else OrderStatus.PARTIALLY_FILLED
         result.completed_at_ms = now_ms()
-        result.raw["simulated"] = {"latency_ms": latency, "stress": str(stress), "drift_pct": str(ps.quote_drift_pct)}
+        result.raw["simulated"] = {
+            "latency_ms": latency,
+            "stress": str(stress),
+            "drift_pct": str(ps.quote_drift_pct),
+        }
         connector.health_tracker.record_order(True)
         return result
 
-    async def _simulate_fill(self, connector: VenueConnector, req: OrderRequest, quote: ExecutionQuote, stress: Decimal, drift: Decimal) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    async def _simulate_fill(
+        self,
+        connector: VenueConnector,
+        req: OrderRequest,
+        quote: ExecutionQuote,
+        stress: Decimal,
+        drift: Decimal,
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
         """Return (filled_base, avg_price, gas_usd, gas_native)."""
         adverse = (1 + drift) if req.side is OrderSide.BUY else (1 - drift)
         if connector.kind is VenueKind.DEX:
@@ -115,9 +144,17 @@ class PaperExecutor:
                 return ZERO, ZERO, ZERO, ZERO
             # stress raises impact pessimistically
             extra_impact = fresh.price_impact_pct * (stress - 1) / HUNDRED
-            px = fresh.avg_price * adverse * ((1 + extra_impact) if req.side is OrderSide.BUY else (1 - extra_impact))
+            px = (
+                fresh.avg_price
+                * adverse
+                * ((1 + extra_impact) if req.side is OrderSide.BUY else (1 - extra_impact))
+            )
             # respect minimum received / max spent like an on-chain slippage check
-            if req.side is OrderSide.SELL and req.min_received is not None and px * req.amount < req.min_received:
+            if (
+                req.side is OrderSide.SELL
+                and req.min_received is not None
+                and px * req.amount < req.min_received
+            ):
                 return ZERO, ZERO, ZERO, ZERO
             if req.side is OrderSide.BUY and req.limit_price is not None and px > req.limit_price:
                 return ZERO, ZERO, ZERO, ZERO
@@ -132,7 +169,9 @@ class PaperExecutor:
         cost = ZERO
         for lv in side_levels:
             px = lv.price * adverse
-            if limit is not None and ((req.side is OrderSide.BUY and px > limit) or (req.side is OrderSide.SELL and px < limit)):
+            if limit is not None and (
+                (req.side is OrderSide.BUY and px > limit) or (req.side is OrderSide.SELL and px < limit)
+            ):
                 break
             take = min(lv.amount, remaining)
             filled += take
@@ -144,7 +183,9 @@ class PaperExecutor:
             return ZERO, ZERO, ZERO, ZERO
         return filled, cost / filled, ZERO, ZERO
 
-    def _gas_cost(self, connector: VenueConnector, quote: ExecutionQuote, stress: Decimal) -> tuple[Decimal, Decimal]:
+    def _gas_cost(
+        self, connector: VenueConnector, quote: ExecutionQuote, stress: Decimal
+    ) -> tuple[Decimal, Decimal]:
         if connector.chain is None:
             return ZERO, ZERO
         snap = self.gas_snapshot(connector.chain)

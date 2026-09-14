@@ -1,4 +1,5 @@
 """Venue connector abstraction. Strategy code never imports ccxt or Gateway directly."""
+
 from __future__ import annotations
 
 import time
@@ -88,7 +89,9 @@ class HealthTracker:
     def rate_limited(self) -> bool:
         return time.monotonic() < self.rate_limited_until
 
-    def classify(self, venue: str, *, market_data_max_age_ms: int = 15_000, expect_ws: bool = False) -> HealthReport:
+    def classify(
+        self, venue: str, *, market_data_max_age_ms: int = 15_000, expect_ws: bool = False
+    ) -> HealthReport:
         reasons: list[str] = []
         health = VenueHealth.HEALTHY
         md_age = (now_ms() - self.last_market_data_ms) if self.last_market_data_ms else None
@@ -103,7 +106,9 @@ class HealthTracker:
             health = max_health(health, VenueHealth.UNHEALTHY)
             reasons.append("no market data yet")
         elif md_age > market_data_max_age_ms:
-            health = max_health(health, VenueHealth.UNHEALTHY if md_age > market_data_max_age_ms * 4 else VenueHealth.DEGRADED)
+            health = max_health(
+                health, VenueHealth.UNHEALTHY if md_age > market_data_max_age_ms * 4 else VenueHealth.DEGRADED
+            )
             reasons.append(f"market data {md_age // 1000}s old")
         lat = self.avg_latency_ms
         if lat is not None and lat > 2500:

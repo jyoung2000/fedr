@@ -1,4 +1,5 @@
 """Accounting: actual vs estimated profit, P&L attribution, capital summary."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,7 +32,9 @@ def _leg_value(leg: OrderResult | None) -> tuple[Decimal, Decimal, Decimal, Deci
     return leg.filled, leg.quote_amount, leg.fee_quote, leg.gas_cost_usd
 
 
-def compute_outcome(tr: TradeRecord, quote_usd_rate: Decimal = Decimal("1"), estimated: dict | None = None) -> TradeOutcome:
+def compute_outcome(
+    tr: TradeRecord, quote_usd_rate: Decimal = Decimal("1"), estimated: dict | None = None
+) -> TradeOutcome:
     bf, bq, bfee, bgas = _leg_value(tr.buy)
     sf, sq, sfee, sgas = _leg_value(tr.sell)
     hf, hq, hfee, hgas = _leg_value(tr.hedge)
@@ -44,8 +47,9 @@ def compute_outcome(tr: TradeRecord, quote_usd_rate: Decimal = Decimal("1"), est
     funding = D(tr.events and 0)
     net = gross - fees - gas - funding
     est = estimated or {}
-    est_slip = D(est.get("slippage", 0)) + D(est.get("price_impact", 0))
-    est_fees = D(est.get("buy_trading_fee", 0)) + D(est.get("sell_trading_fee", 0)) + D(est.get("dex_swap_fee", 0))
+    est_fees = (
+        D(est.get("buy_trading_fee", 0)) + D(est.get("sell_trading_fee", 0)) + D(est.get("dex_swap_fee", 0))
+    )
     est_gas = D(est.get("gas", 0)) + D(est.get("priority_fee", 0))
     # realized slippage vs quoted execution prices
     slip_var = ZERO
@@ -54,7 +58,9 @@ def compute_outcome(tr: TradeRecord, quote_usd_rate: Decimal = Decimal("1"), est
     if tr.sell and tr.sell.avg_price and tr.sell.request.extra.get("quoted_price"):
         slip_var += (D(tr.sell.request.extra["quoted_price"]) - tr.sell.avg_price) * sf
     matched = min(bf, sf + (hf if tr.hedge and tr.hedge.request.side is OrderSide.SELL else ZERO))
-    unmatched = abs(bf - sf - (hf if tr.hedge and tr.hedge.request.side is OrderSide.SELL else -hf if tr.hedge else ZERO))
+    unmatched = abs(
+        bf - sf - (hf if tr.hedge and tr.hedge.request.side is OrderSide.SELL else -hf if tr.hedge else ZERO)
+    )
     return TradeOutcome(
         actual_gross=gross,
         trading_fees=fees,

@@ -3,6 +3,7 @@
 Every enum here is a `str` enum so it serialises cleanly into JSON, SQLite and
 the audit log without extra glue.
 """
+
 from __future__ import annotations
 
 from enum import Enum

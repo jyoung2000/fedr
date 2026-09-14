@@ -17,7 +17,9 @@ D = Decimal
 
 def test_slippage_limits_asset_venue_route_size(settings):
     g = SlippageGuard(settings.slippage)
-    assert g.limit_for("BTC", "kraken", "kraken->coinbase", D("50")) == D("0.15")  # asset-specific beats default
+    assert g.limit_for("BTC", "kraken", "kraken->coinbase", D("50")) == D(
+        "0.15"
+    )  # asset-specific beats default
     settings.slippage.per_venue_max_pct["kraken"] = D("0.05")
     assert g.limit_for("SOL", "kraken", "x", D("50")) == D("0.05")
     settings.slippage.per_route_max_pct["a->b"] = D("0.02")
@@ -46,7 +48,7 @@ def test_latency_guard_rejects_stale():
 def test_gas_regimes_and_estimates(settings):
     guard = GasGuard(settings.gas, GasBaseline())
     guard.baseline.seed(Chain.ETHEREUM, D("10"))
-    assert guard.regime(Chain.ETHEREUM, D("12")) .value == "normal"
+    assert guard.regime(Chain.ETHEREUM, D("12")).value == "normal"
     assert guard.regime(Chain.ETHEREUM, D("16")).value == "elevated"
     assert guard.regime(Chain.ETHEREUM, D("30")).value == "high"
     assert guard.regime(Chain.ETHEREUM, D("50")).value == "extreme"
@@ -60,23 +62,41 @@ def test_gas_guard_max_priority_and_price(settings):
     guard = GasGuard(settings.gas)
     snap = gas_snapshot(Chain.ETHEREUM, D("100"), D("3000"), priority=D("10"))
     a = guard.assess(snap, 100_000, D("1000"))
-    assert not a.passed and any("priority" in r for r in a.reasons) and any("gas price" in r for r in a.reasons)
+    assert (
+        not a.passed and any("priority" in r for r in a.reasons) and any("gas price" in r for r in a.reasons)
+    )
     assert not guard.assess(None, 100_000, D("100")).passed
 
 
 def _portfolio(**kw) -> PortfolioState:
-    base = dict(total_capital_usd=D("10000"), usable_capital_usd=D("8000"), venue_health={"a": VenueHealth.HEALTHY, "b": VenueHealth.HEALTHY}, available_balances={("a", "USDC"): D("5000"), ("b", "SOL"): D("100")})
+    base = dict(
+        total_capital_usd=D("10000"),
+        usable_capital_usd=D("8000"),
+        venue_health={"a": VenueHealth.HEALTHY, "b": VenueHealth.HEALTHY},
+        available_balances={("a", "USDC"): D("5000"), ("b", "SOL"): D("100")},
+    )
     base.update(kw)
     return PortfolioState(**base)
 
 
 def _legs(size=D("2"), px=D("100")):
-    return cex_quote("a", OrderSide.BUY, size, px, fee_pct=D("0.1")), cex_quote("b", OrderSide.SELL, size, px * D("1.01"), fee_pct=D("0.1"))
+    return cex_quote("a", OrderSide.BUY, size, px, fee_pct=D("0.1")), cex_quote(
+        "b", OrderSide.SELL, size, px * D("1.01"), fee_pct=D("0.1")
+    )
 
 
 def test_risk_engine_passes_healthy_small_trade(settings):
     buy, sell = _legs()
-    r = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="SOL", quote="USDC", notional_usd=D("200"), capital_required_usd=D("200"), portfolio=_portfolio())
+    r = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="SOL",
+        quote="USDC",
+        notional_usd=D("200"),
+        capital_required_usd=D("200"),
+        portfolio=_portfolio(),
+    )
     assert r.passed and r.score <= settings.trading.max_risk_score
 
 
@@ -99,31 +119,87 @@ def test_risk_engine_hard_limits(settings, kw, needle):
     buy, sell = _legs()
     if "gas_reserve_ok" in kw:
         sell = dex_quote("b", OrderSide.SELL, D("2"), D("101"), D("100.9"), chain=Chain.SOLANA)
-    r = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="SOL", quote="USDC", notional_usd=D("200"), capital_required_usd=D("200"), portfolio=_portfolio(**kw))
+    r = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="SOL",
+        quote="USDC",
+        notional_usd=D("200"),
+        capital_required_usd=D("200"),
+        portfolio=_portfolio(**kw),
+    )
     assert not r.passed and any(needle in x for x in r.reasons), r.reasons
 
 
 def test_risk_engine_exposure_and_size_limits(settings):
     buy, sell = _legs(size=D("50"))
-    r = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="SOL", quote="USDC", notional_usd=D("5000"), capital_required_usd=D("5000"), portfolio=_portfolio())
+    r = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="SOL",
+        quote="USDC",
+        notional_usd=D("5000"),
+        capital_required_usd=D("5000"),
+        portfolio=_portfolio(),
+    )
     assert any("exceeds max" in x for x in r.reasons)
-    r2 = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="SOL", quote="USDC", notional_usd=D("200"), capital_required_usd=D("200"), portfolio=_portfolio(exposure_by_venue_usd={"a": D("4000")}))
+    r2 = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="SOL",
+        quote="USDC",
+        notional_usd=D("200"),
+        capital_required_usd=D("200"),
+        portfolio=_portfolio(exposure_by_venue_usd={"a": D("4000")}),
+    )
     assert any("exposure on a" in x for x in r2.reasons)
-    r3 = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="DOGE", quote="USDC", notional_usd=D("200"), capital_required_usd=D("200"), portfolio=_portfolio())
+    r3 = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="DOGE",
+        quote="USDC",
+        notional_usd=D("200"),
+        capital_required_usd=D("200"),
+        portfolio=_portfolio(),
+    )
     assert any("allowlist" in x for x in r3.reasons)
 
 
 def test_risk_engine_degraded_allowed_when_configured(settings):
     settings.risk.allow_degraded_venues = True
     buy, sell = _legs()
-    r = RiskEngine(settings).assess(strategy=Strategy.CEX_CEX, buy=buy, sell=sell, base="SOL", quote="USDC", notional_usd=D("200"), capital_required_usd=D("200"), portfolio=_portfolio(venue_health={"a": VenueHealth.DEGRADED, "b": VenueHealth.HEALTHY}))
+    r = RiskEngine(settings).assess(
+        strategy=Strategy.CEX_CEX,
+        buy=buy,
+        sell=sell,
+        base="SOL",
+        quote="USDC",
+        notional_usd=D("200"),
+        capital_required_usd=D("200"),
+        portfolio=_portfolio(venue_health={"a": VenueHealth.DEGRADED, "b": VenueHealth.HEALTHY}),
+    )
     assert r.passed and r.score >= 15
 
 
 def test_flash_loan_risk_limits(settings):
     buy = dex_quote("a", OrderSide.BUY, D("10"), D("2000"), D("2001"), chain=Chain.BASE)
     sell = dex_quote("b", OrderSide.SELL, D("10"), D("2010"), D("2009"), chain=Chain.BASE)
-    r = RiskEngine(settings).assess(strategy=Strategy.FLASH_LOAN, buy=buy, sell=sell, base="ETH", quote="USDC", notional_usd=D("20000"), capital_required_usd=D("5"), portfolio=_portfolio(), gas_usd=D("6"), flash_loan_usd=D("30000"))
+    r = RiskEngine(settings).assess(
+        strategy=Strategy.FLASH_LOAN,
+        buy=buy,
+        sell=sell,
+        base="ETH",
+        quote="USDC",
+        notional_usd=D("20000"),
+        capital_required_usd=D("5"),
+        portfolio=_portfolio(),
+        gas_usd=D("6"),
+        flash_loan_usd=D("30000"),
+    )
     assert any("flash loan" in x and "exceeds max" in x for x in r.reasons)
     assert any("flash loan gas" in x for x in r.reasons)
 
@@ -164,7 +240,9 @@ def test_circuit_breakers_trip_reset_and_counters():
         await cb.trip(CircuitBreakerReason.BALANCE_DISCREPANCY, "diff")
         assert cb.is_tripped() and len(cb.blocks(venue="x")) == 1
         for _ in range(2):
-            assert not await cb.record_and_check("fails", 3, CircuitBreakerReason.REPEATED_ORDER_FAILURE, "fails")
+            assert not await cb.record_and_check(
+                "fails", 3, CircuitBreakerReason.REPEATED_ORDER_FAILURE, "fails"
+            )
         assert await cb.record_and_check("fails", 3, CircuitBreakerReason.REPEATED_ORDER_FAILURE, "fails")
         n = await cb.reset(CircuitBreakerReason.GAS_SPIKE, scope="chain:base")
         assert n == 1 and len(cb.active) == 2

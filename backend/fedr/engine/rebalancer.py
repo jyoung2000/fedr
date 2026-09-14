@@ -1,5 +1,6 @@
 """Rebalancer: recommends (never auto-executes) inventory transfers when the
 economics justify them. Balances differing is NOT a reason to rebalance."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -27,7 +28,12 @@ class RebalanceRecommendation:
 
 
 # Documented conservative fallbacks (USD) for transfer costs when no live quote is available.
-FALLBACK_TRANSFER_COST_USD = {"withdrawal": Decimal("3.00"), "network": Decimal("1.50"), "bridge": Decimal("8.00"), "swap": Decimal("2.00")}
+FALLBACK_TRANSFER_COST_USD = {
+    "withdrawal": Decimal("3.00"),
+    "network": Decimal("1.50"),
+    "bridge": Decimal("8.00"),
+    "swap": Decimal("2.00"),
+}
 
 
 class Rebalancer:
@@ -44,8 +50,17 @@ class Rebalancer:
         if len(self.blocked_value[(venue, asset)]) > 500:
             self.blocked_value[(venue, asset)] = self.blocked_value[(venue, asset)][-500:]
 
-    def transfer_cost_usd(self, from_venue: str, to_venue: str, asset: str, amount_usd: Decimal, withdrawal_fee_usd: Decimal | None = None) -> Decimal:
-        cost = withdrawal_fee_usd if withdrawal_fee_usd is not None else FALLBACK_TRANSFER_COST_USD["withdrawal"]
+    def transfer_cost_usd(
+        self,
+        from_venue: str,
+        to_venue: str,
+        asset: str,
+        amount_usd: Decimal,
+        withdrawal_fee_usd: Decimal | None = None,
+    ) -> Decimal:
+        cost = (
+            withdrawal_fee_usd if withdrawal_fee_usd is not None else FALLBACK_TRANSFER_COST_USD["withdrawal"]
+        )
         cost += FALLBACK_TRANSFER_COST_USD["network"]
         from_chain = self.inventory._lines.get((from_venue, asset))
         to_chain = self.inventory._lines.get((to_venue, asset))
@@ -60,20 +75,37 @@ class Rebalancer:
         for (venue, asset), values in self.blocked_value.items():
             if not values:
                 continue
-            benefit = sum(values, ZERO) * Decimal("0.5")  # assume half the blocked value would have been captured
+            benefit = sum(values, ZERO) * Decimal(
+                "0.5"
+            )  # assume half the blocked value would have been captured
             # find a donor venue with the most of this asset
-            donors = [l for l in self.inventory.lines() if l.asset == asset and l.venue != venue and l.available > 0]
+            donors = [
+                l for l in self.inventory.lines() if l.asset == asset and l.venue != venue and l.available > 0
+            ]
             if not donors:
                 continue
             donor = max(donors, key=lambda l: l.available)
             px = self.inventory.price_usd(asset) or Decimal("1")
             target_line = self.inventory._lines.get((venue, asset))
-            shortfall_usd = max(Decimal("50"), (target_line.target - target_line.total) * px if target_line and target_line.target > 0 else donor.available * px * Decimal("0.3"))
+            shortfall_usd = max(
+                Decimal("50"),
+                (target_line.target - target_line.total) * px
+                if target_line and target_line.target > 0
+                else donor.available * px * Decimal("0.3"),
+            )
             amount = min(donor.available * Decimal("0.5"), shortfall_usd / px)
             if amount <= 0:
                 continue
             cost = self.transfer_cost_usd(donor.venue, venue, asset, amount * px)
-            rec = RebalanceRecommendation(donor.venue, venue, asset, amount, cost, benefit, f"{self.blocked_count[(venue, asset)]} opportunities blocked by missing {asset} on {venue} in the lookback window")
+            rec = RebalanceRecommendation(
+                donor.venue,
+                venue,
+                asset,
+                amount,
+                cost,
+                benefit,
+                f"{self.blocked_count[(venue, asset)]} opportunities blocked by missing {asset} on {venue} in the lookback window",
+            )
             if rec.net_benefit_usd >= self.settings.min_net_benefit_usd:
                 out.append(rec)
         return sorted(out, key=lambda r: -r.net_benefit_usd)

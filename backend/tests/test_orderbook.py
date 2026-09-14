@@ -8,7 +8,9 @@ from tests.conftest import make_book
 
 
 def test_walk_buy_vwap_and_slippage():
-    ob = OrderBook.from_raw("x", "SOL/USDC", bids=[[100, 5], [99.9, 10]], asks=[[100.1, 2], [100.2, 3], [100.5, 10]])
+    ob = OrderBook.from_raw(
+        "x", "SOL/USDC", bids=[[100, 5], [99.9, 10]], asks=[[100.1, 2], [100.2, 3], [100.5, 10]]
+    )
     w = ob.walk(OrderSide.BUY, Decimal("4"))
     assert w.fully_filled and w.levels_consumed == 2
     assert w.quote_amount == Decimal("100.1") * 2 + Decimal("100.2") * 2
@@ -36,7 +38,9 @@ def test_walk_quote_amount():
 
 
 def test_max_size_within_slippage():
-    ob = make_book("x", "SOL/USDC", Decimal("100"), spread_bps=Decimal("2"), step_bps=Decimal("10"), size=Decimal("1"))
+    ob = make_book(
+        "x", "SOL/USDC", Decimal("100"), spread_bps=Decimal("2"), step_bps=Decimal("10"), size=Decimal("1")
+    )
     cap = ob.max_size_within_slippage(OrderSide.BUY, Decimal("0.05"))
     assert Decimal(0) < cap < ob.depth_base(OrderSide.BUY)
 

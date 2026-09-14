@@ -1,11 +1,12 @@
 """CIRCUIT BREAKERS - pause trading on anomalies; manual reset after investigation."""
+
 from __future__ import annotations
 
 import asyncio
 import time
 from collections import defaultdict, deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 
 from fedr.core.enums import CircuitBreakerReason
 from fedr.core.models import now_ms
@@ -53,7 +54,9 @@ class CircuitBreakerManager:
             return True
         return any(b.scope == scope for b in self._active.values())
 
-    def blocks(self, venue: str | None = None, chain: str | None = None, strategy: str | None = None) -> list[str]:
+    def blocks(
+        self, venue: str | None = None, chain: str | None = None, strategy: str | None = None
+    ) -> list[str]:
         out = []
         for b in self._active.values():
             if b.scope == "global":
@@ -66,7 +69,9 @@ class CircuitBreakerManager:
                 out.append(f"circuit breaker on strategy {strategy}: {b.reason.value}")
         return out
 
-    async def trip(self, reason: CircuitBreakerReason, detail: str, scope: str = "global", auto: bool = True) -> Breaker:
+    async def trip(
+        self, reason: CircuitBreakerReason, detail: str, scope: str = "global", auto: bool = True
+    ) -> Breaker:
         key = f"{scope}|{reason.value}"
         async with self._lock:
             b = self._active.get(key)
@@ -112,7 +117,13 @@ class CircuitBreakerManager:
         return len(dq)
 
     async def record_and_check(
-        self, counter: str, threshold: int, reason: CircuitBreakerReason, detail: str, scope: str = "global", window_s: float = 3600.0
+        self,
+        counter: str,
+        threshold: int,
+        reason: CircuitBreakerReason,
+        detail: str,
+        scope: str = "global",
+        window_s: float = 3600.0,
     ) -> bool:
         n = self.record(counter, window_s)
         if n >= threshold:

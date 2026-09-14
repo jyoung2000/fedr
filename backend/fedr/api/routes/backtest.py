@@ -30,6 +30,13 @@ async def run(body: BacktestBody, app=Depends(require_app)):
         if not str(p).startswith(str((app.env.data_dir / "market-data").resolve())) or not p.exists():
             raise HTTPException(400, "recorded file not found under data/market-data")
         recorded = p
-    result = await asyncio.wait_for(run_backtest(app.settings, ticks=body.ticks, seed=body.seed, label=body.label, recorded=recorded), timeout=600)
-    await app.repo.save_backtest(BacktestRun(id=result["id"], label=result["label"], params=result["params"], results=result["results"]))
+    result = await asyncio.wait_for(
+        run_backtest(app.settings, ticks=body.ticks, seed=body.seed, label=body.label, recorded=recorded),
+        timeout=600,
+    )
+    await app.repo.save_backtest(
+        BacktestRun(
+            id=result["id"], label=result["label"], params=result["params"], results=result["results"]
+        )
+    )
     return result

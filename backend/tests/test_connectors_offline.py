@@ -1,8 +1,8 @@
 """Offline tests for connector internals that cannot be exercised against live venues here."""
+
 from __future__ import annotations
 
 import asyncio
-import json
 from decimal import Decimal
 
 import httpx
@@ -17,15 +17,20 @@ from ccxt.base.errors import (
     RateLimitExceeded,
 )
 
-from fedr.connectors.base import ConnectorError, InsufficientBalance, NotSupportedError, OrderRejected, VenueUnavailable
+from fedr.connectors.base import (
+    ConnectorError,
+    InsufficientBalance,
+    NotSupportedError,
+    OrderRejected,
+    VenueUnavailable,
+)
 from fedr.connectors.cex.ccxt_connector import CcxtConnector, _map_error
 from fedr.connectors.cex.registry import EXCHANGES
 from fedr.connectors.dex.gateway_client import GatewayClient, GatewayError
 from fedr.connectors.dex.gateway_connector import GatewayConnector
 from fedr.connectors.dex.registry import DEXES
-from fedr.core.enums import OrderSide, OrderStatus, TradingMode
+from fedr.core.enums import OrderSide, OrderStatus, TradingMode, VenueKind
 from fedr.core.models import MarketInfo, OrderRequest, OrderResult
-from fedr.core.enums import VenueKind
 
 D = Decimal
 
@@ -72,21 +77,57 @@ def test_ccxt_connector_builds_every_registry_exchange_offline():
 def _connector_with_market() -> CcxtConnector:
     c = CcxtConnector("kraken", TradingMode.PAPER)
     c.exchange = c._build()
-    c.markets["SOL/USDC"] = MarketInfo(venue="kraken", symbol="SOL/USDC", base="SOL", quote="USDC", kind=VenueKind.CEX, amount_step=D("0.001"), price_step=D("0.01"), min_amount=D("0.1"), min_cost=D("5"), taker_fee_pct=D("0.26"), maker_fee_pct=D("0.16"))
+    c.markets["SOL/USDC"] = MarketInfo(
+        venue="kraken",
+        symbol="SOL/USDC",
+        base="SOL",
+        quote="USDC",
+        kind=VenueKind.CEX,
+        amount_step=D("0.001"),
+        price_step=D("0.01"),
+        min_amount=D("0.1"),
+        min_cost=D("5"),
+        taker_fee_pct=D("0.26"),
+        maker_fee_pct=D("0.16"),
+    )
     return c
 
 
 def test_order_status_mapping_and_fee_conversion():
     c = _connector_with_market()
-    req = OrderRequest(venue="kraken", symbol="SOL/USDC", side=OrderSide.BUY, amount=D("2"), limit_price=D("150"))
+    req = OrderRequest(
+        venue="kraken", symbol="SOL/USDC", side=OrderSide.BUY, amount=D("2"), limit_price=D("150")
+    )
     res = OrderResult(request=req, order_id="1", status=OrderStatus.NEW)
     c._apply_order(res, {"id": "1", "status": "open", "filled": 0.5, "remaining": 1.5, "average": 149.9})
     assert res.status is OrderStatus.PARTIALLY_FILLED and res.filled == D("0.5")
     c._apply_order(res, {"id": "1", "status": "canceled", "filled": 0.5, "remaining": 1.5})
     assert res.status is OrderStatus.PARTIALLY_FILLED  # cancelled after a partial fill keeps the fill
     res2 = OrderResult(request=req, order_id="2", status=OrderStatus.NEW)
-    c._apply_order(res2, {"id": "2", "status": "closed", "filled": 2, "remaining": 0, "average": 150.1, "trades": [{"id": "t1", "amount": 2, "price": 150.1, "fee": {"cost": 0.78, "currency": "USDC"}, "timestamp": 1}]})
-    assert res2.status is OrderStatus.FILLED and res2.fills[0].fee_asset == "USDC" and res2.fee_quote == D("0.78")
+    c._apply_order(
+        res2,
+        {
+            "id": "2",
+            "status": "closed",
+            "filled": 2,
+            "remaining": 0,
+            "average": 150.1,
+            "trades": [
+                {
+                    "id": "t1",
+                    "amount": 2,
+                    "price": 150.1,
+                    "fee": {"cost": 0.78, "currency": "USDC"},
+                    "timestamp": 1,
+                }
+            ],
+        },
+    )
+    assert (
+        res2.status is OrderStatus.FILLED
+        and res2.fills[0].fee_asset == "USDC"
+        and res2.fee_quote == D("0.78")
+    )
     # fee in base asset converts at fill price; fee in a third asset falls back to the schedule and is flagged
     assert c._fee_to_quote(D("0.01"), "SOL", res2, D("150")) == D("1.5")
     assert c._fee_to_quote(D("0.001"), "KFEE", res2, D("150")) == res2.quote_amount * D("0.26") / 100
@@ -117,7 +158,9 @@ def test_orderbook_limit_snaps_to_exchange_allowed_values():
 
 def _gateway(handler) -> GatewayClient:
     client = GatewayClient("http://gateway:15888")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gateway:15888")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://gateway:15888"
+    )
     return client
 
 
@@ -130,15 +173,55 @@ def test_gateway_quote_parsing_and_errors():
             if request.url.path == "/":
                 return httpx.Response(200, json={"status": "ok"})
             if request.url.path.endswith("/router/quote-swap"):
-                return httpx.Response(200, json={"quoteId": "q1", "tokenIn": "USDC", "tokenOut": "SOL", "amountIn": "301.5", "amountOut": "2", "price": "150.75", "priceImpactPct": "0.12", "minAmountOut": "1.99", "maxAmountIn": "304.5"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "quoteId": "q1",
+                        "tokenIn": "USDC",
+                        "tokenOut": "SOL",
+                        "amountIn": "301.5",
+                        "amountOut": "2",
+                        "price": "150.75",
+                        "priceImpactPct": "0.12",
+                        "minAmountOut": "1.99",
+                        "maxAmountIn": "304.5",
+                    },
+                )
             if request.url.path.endswith("/router/execute-quote"):
-                return httpx.Response(400, json={"statusCode": 400, "error": "Bad Request", "message": "Slippage tolerance exceeded", "code": "SLIPPAGE_EXCEEDED"})
+                return httpx.Response(
+                    400,
+                    json={
+                        "statusCode": 400,
+                        "error": "Bad Request",
+                        "message": "Slippage tolerance exceeded",
+                        "code": "SLIPPAGE_EXCEEDED",
+                    },
+                )
             if request.url.path.endswith("/estimate-gas"):
-                return httpx.Response(200, json={"feePerComputeUnit": 0.1, "denomination": "lamports", "computeUnits": 200000, "feeAsset": "SOL", "fee": 0.000025})
+                return httpx.Response(
+                    200,
+                    json={
+                        "feePerComputeUnit": 0.1,
+                        "denomination": "lamports",
+                        "computeUnits": 200000,
+                        "feeAsset": "SOL",
+                        "fee": 0.000025,
+                    },
+                )
             if request.url.path == "/tokens/":
-                return httpx.Response(200, json={"tokens": [{"symbol": "SOL", "address": "So111", "decimals": 9}, {"symbol": "USDC", "address": "EPjF", "decimals": 6}]})
+                return httpx.Response(
+                    200,
+                    json={
+                        "tokens": [
+                            {"symbol": "SOL", "address": "So111", "decimals": 9},
+                            {"symbol": "USDC", "address": "EPjF", "decimals": 6},
+                        ]
+                    },
+                )
             if request.url.path.endswith("/status"):
-                return httpx.Response(200, json={"chain": "solana", "network": "mainnet-beta", "currentBlockNumber": 1})
+                return httpx.Response(
+                    200, json={"chain": "solana", "network": "mainnet-beta", "currentBlockNumber": 1}
+                )
             return httpx.Response(404, json={"message": "not found"})
 
         gw = _gateway(handler)
@@ -161,7 +244,14 @@ def test_gateway_quote_parsing_and_errors():
         assert eq.reference_price < eq.avg_price  # impact removed from the effective price
         assert eq.quote_id == "q1" and eq.fully_fillable
         # executing a stale/unknown quote id must fail closed
-        req = OrderRequest(venue="jupiter", symbol="SOL/USDC", side=OrderSide.BUY, amount=D("2"), limit_price=D("151"), quote_id="unknown")
+        req = OrderRequest(
+            venue="jupiter",
+            symbol="SOL/USDC",
+            side=OrderSide.BUY,
+            amount=D("2"),
+            limit_price=D("151"),
+            quote_id="unknown",
+        )
         c.wallet_address = "wallet"
         from fedr.connectors.base import QuoteExpired
 

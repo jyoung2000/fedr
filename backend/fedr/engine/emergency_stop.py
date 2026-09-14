@@ -1,4 +1,5 @@
 """Emergency stop: stop new trades, cancel cancellable orders, block on-chain execution, reconcile."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -19,7 +20,12 @@ class StopReport:
     reconciliation: dict | None = None
 
     def as_dict(self) -> dict:
-        return {"activated_at_ms": self.activated_at_ms, "cancelled_orders": self.cancelled_orders, "errors": self.errors, "reconciliation": self.reconciliation}
+        return {
+            "activated_at_ms": self.activated_at_ms,
+            "cancelled_orders": self.cancelled_orders,
+            "errors": self.errors,
+            "reconciliation": self.reconciliation,
+        }
 
 
 class EmergencyStop:
@@ -36,7 +42,11 @@ class EmergencyStop:
         rep = StopReport()
         await ctx.breakers.trip(CircuitBreakerReason.MANUAL, f"emergency stop: {reason}", auto=False)
         for c in ctx.connectors.values():
-            if c.kind not in (VenueKind.CEX, VenueKind.PERP) or not c.connected or not getattr(c, "credentials", None):
+            if (
+                c.kind not in (VenueKind.CEX, VenueKind.PERP)
+                or not c.connected
+                or not getattr(c, "credentials", None)
+            ):
                 continue
             try:
                 for o in await c.fetch_open_orders():
@@ -54,8 +64,12 @@ class EmergencyStop:
             rep.errors.append(f"reconciliation failed: {exc}")
         self.report = rep
         if ctx.repo:
-            await ctx.repo.audit(ctx.mode, "emergency_stop", f"EMERGENCY STOP activated: {reason}", rep.as_dict(), actor=actor)
-            await ctx.repo.save_settings_doc({"active": True, "reason": reason, "at_ms": rep.activated_at_ms}, key="emergency_stop")
+            await ctx.repo.audit(
+                ctx.mode, "emergency_stop", f"EMERGENCY STOP activated: {reason}", rep.as_dict(), actor=actor
+            )
+            await ctx.repo.save_settings_doc(
+                {"active": True, "reason": reason, "at_ms": rep.activated_at_ms}, key="emergency_stop"
+            )
         return rep
 
     async def release(self, actor: str = "user") -> None:

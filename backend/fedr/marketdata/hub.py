@@ -4,12 +4,13 @@ Event driven: every book update triggers ``on_update(venue, symbol)`` so the
 scanner can re-evaluate only the routes that changed. Nothing here streams raw
 updates to the browser - the API aggregates.
 """
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import Awaitable, Callable
 
 from fedr.connectors.base import NotSupportedError, VenueConnector, VenueUnavailable
 from fedr.core.enums import VenueKind
@@ -20,8 +21,24 @@ from fedr.marketdata.orderbook import OrderBook
 
 log = get_logger("marketdata")
 
-STABLES = {"USDC": Decimal("1"), "USDT": Decimal("1"), "USD": Decimal("1"), "DAI": Decimal("1"), "FDUSD": Decimal("1"), "UST": Decimal("1")}
-WRAPPED = {"WETH": "ETH", "WBTC": "BTC", "WSOL": "SOL", "WBNB": "BNB", "WMATIC": "POL", "MATIC": "POL", "WAVAX": "AVAX", "USDC.E": "USDC"}
+STABLES = {
+    "USDC": Decimal("1"),
+    "USDT": Decimal("1"),
+    "USD": Decimal("1"),
+    "DAI": Decimal("1"),
+    "FDUSD": Decimal("1"),
+    "UST": Decimal("1"),
+}
+WRAPPED = {
+    "WETH": "ETH",
+    "WBTC": "BTC",
+    "WSOL": "SOL",
+    "WBNB": "BNB",
+    "WMATIC": "POL",
+    "MATIC": "POL",
+    "WAVAX": "AVAX",
+    "USDC.E": "USDC",
+}
 
 
 class PriceIndex:
@@ -98,10 +115,14 @@ class MarketDataHub:
                 log.error("on_update callback failed", error=str(exc))
 
     def _stat(self, venue: str) -> dict:
-        return self.stats.setdefault(venue, {"updates": 0, "invalid": 0, "errors": 0, "last_ms": 0, "source": None, "ws": None})
+        return self.stats.setdefault(
+            venue, {"updates": 0, "invalid": 0, "errors": 0, "last_ms": 0, "source": None, "ws": None}
+        )
 
     # ---- lifecycle --------------------------------------------------------------
-    async def start(self, connectors: list[VenueConnector], symbols_for: Callable[[VenueConnector], list[str]]) -> None:
+    async def start(
+        self, connectors: list[VenueConnector], symbols_for: Callable[[VenueConnector], list[str]]
+    ) -> None:
         self._running = True
         for c in connectors:
             if c.kind is VenueKind.DEX:
@@ -142,7 +163,12 @@ class MarketDataHub:
             except Exception as exc:
                 self._stat(c.name)["errors"] += 1
                 self._stat(c.name)["ws"] = False
-                log.warning("ws feed error - falling back to REST while reconnecting", venue=c.name, symbol=symbol, error=str(exc)[:200])
+                log.warning(
+                    "ws feed error - falling back to REST while reconnecting",
+                    venue=c.name,
+                    symbol=symbol,
+                    error=str(exc)[:200],
+                )
                 # REST fallback during backoff so the venue is DEGRADED rather than blind
                 end = asyncio.get_event_loop().time() + backoff
                 while self._running and asyncio.get_event_loop().time() < end:

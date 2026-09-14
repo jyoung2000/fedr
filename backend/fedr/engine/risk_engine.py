@@ -1,4 +1,5 @@
 """RISK ENGINE - deterministic limits and a 0..100 risk score. AI never overrides it."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -55,13 +56,19 @@ class RiskEngine:
 
         # --- hard limits ----------------------------------------------------------------
         if flash_loan_usd is None and notional_usd > t.max_trade_size_usd:
-            reasons.append(f"trade size {fmt_money(notional_usd)} exceeds max {fmt_money(t.max_trade_size_usd)}")
+            reasons.append(
+                f"trade size {fmt_money(notional_usd)} exceeds max {fmt_money(t.max_trade_size_usd)}"
+            )
         if notional_usd < t.min_trade_size_usd:
-            reasons.append(f"trade size {fmt_money(notional_usd)} below minimum {fmt_money(t.min_trade_size_usd)}")
+            reasons.append(
+                f"trade size {fmt_money(notional_usd)} below minimum {fmt_money(t.min_trade_size_usd)}"
+            )
         if portfolio.active_breakers:
             reasons.extend(portfolio.active_breakers)
         if portfolio.open_trades >= r.max_concurrent_trades:
-            reasons.append(f"max concurrent trades reached ({portfolio.open_trades}/{r.max_concurrent_trades})")
+            reasons.append(
+                f"max concurrent trades reached ({portfolio.open_trades}/{r.max_concurrent_trades})"
+            )
         if portfolio.daily_realized_pnl_usd <= -r.max_daily_loss_usd:
             reasons.append(
                 f"daily loss limit hit ({fmt_money(portfolio.daily_realized_pnl_usd)} vs -{fmt_money(r.max_daily_loss_usd)})"
@@ -76,9 +83,13 @@ class RiskEngine:
             reasons.append(f"asset not on allowlist ({base}/{quote})")
         if flash_loan_usd is not None:
             if flash_loan_usd > r.max_flash_loan_usd:
-                reasons.append(f"flash loan {fmt_money(flash_loan_usd)} exceeds max {fmt_money(r.max_flash_loan_usd)}")
+                reasons.append(
+                    f"flash loan {fmt_money(flash_loan_usd)} exceeds max {fmt_money(r.max_flash_loan_usd)}"
+                )
             if gas_usd > r.max_flash_loan_gas_usd:
-                reasons.append(f"flash loan gas {fmt_money(gas_usd)} exceeds max {fmt_money(r.max_flash_loan_gas_usd)}")
+                reasons.append(
+                    f"flash loan gas {fmt_money(gas_usd)} exceeds max {fmt_money(r.max_flash_loan_gas_usd)}"
+                )
 
         # --- capital usage / exposures ---------------------------------------------------
         total = portfolio.total_capital_usd
@@ -91,18 +102,24 @@ class RiskEngine:
             for venue in {buy.venue, sell.venue}:
                 exp = portfolio.exposure_by_venue_usd.get(venue, ZERO) + notional_usd
                 if pct(exp, total) > r.max_exchange_exposure_pct:
-                    reasons.append(f"exposure on {venue} would reach {pct(exp, total):.1f}% (max {r.max_exchange_exposure_pct}%)")
+                    reasons.append(
+                        f"exposure on {venue} would reach {pct(exp, total):.1f}% (max {r.max_exchange_exposure_pct}%)"
+                    )
             for leg in (buy, sell):
                 if leg.chain is not None:
                     exp = portfolio.exposure_by_chain_usd.get(leg.chain.value, ZERO) + notional_usd
                     if pct(exp, total) > r.max_chain_exposure_pct:
-                        reasons.append(f"exposure on chain {leg.chain.value} would exceed {r.max_chain_exposure_pct}%")
+                        reasons.append(
+                            f"exposure on chain {leg.chain.value} would exceed {r.max_chain_exposure_pct}%"
+                        )
             # A spot arbitrage leaves net asset exposure unchanged (bought on one venue, sold on the other);
             # carry strategies open a position, so only they add the notional.
             carry = strategy in (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS)
             exp = portfolio.exposure_by_asset_usd.get(base, ZERO) + (notional_usd if carry else ZERO)
             if pct(exp, total) > r.max_asset_exposure_pct:
-                reasons.append(f"exposure to {base} {'would exceed' if carry else 'already exceeds'} {r.max_asset_exposure_pct}% of capital")
+                reasons.append(
+                    f"exposure to {base} {'would exceed' if carry else 'already exceeds'} {r.max_asset_exposure_pct}% of capital"
+                )
         elif capital_required_usd > 0 and flash_loan_usd is None:
             reasons.append("no capital available")
 
@@ -113,7 +130,9 @@ class RiskEngine:
             if have_quote is None:
                 reasons.append(f"balance of {quote} on {buy.venue} unknown")
             elif have_quote < need_quote:
-                reasons.append(f"insufficient {quote} on {buy.venue}: need {need_quote:.2f}, have {have_quote:.2f}")
+                reasons.append(
+                    f"insufficient {quote} on {buy.venue}: need {need_quote:.2f}, have {have_quote:.2f}"
+                )
             if sell.kind is VenueKind.PERP:
                 # a perpetual short is collateralised in quote (1x - leverage is not allowed by default)
                 margin = sell.quote_amount if not r.leverage_allowed else sell.quote_amount / 2
@@ -121,13 +140,17 @@ class RiskEngine:
                 if have_margin is None:
                     reasons.append(f"collateral balance of {quote} on {sell.venue} unknown")
                 elif have_margin < margin:
-                    reasons.append(f"insufficient {quote} collateral on {sell.venue}: need {margin:.2f}, have {have_margin:.2f}")
+                    reasons.append(
+                        f"insufficient {quote} collateral on {sell.venue}: need {margin:.2f}, have {have_margin:.2f}"
+                    )
             else:
                 have_base = portfolio.available_balances.get((sell.venue, base))
                 if have_base is None:
                     reasons.append(f"balance of {base} on {sell.venue} unknown")
                 elif have_base < sell.base_amount:
-                    reasons.append(f"insufficient {base} on {sell.venue}: need {sell.base_amount}, have {have_base}")
+                    reasons.append(
+                        f"insufficient {base} on {sell.venue}: need {sell.base_amount}, have {have_base}"
+                    )
         for leg in (buy, sell):
             if leg.kind is VenueKind.DEX and leg.chain is not None:
                 ok = portfolio.gas_reserve_ok.get(leg.chain.value)
@@ -165,7 +188,9 @@ class RiskEngine:
             reasons.append(f"risk score {score} exceeds maximum {t.max_risk_score}")
         return RiskAssessment(score=score, passed=not reasons, reasons=reasons, factors=factors)
 
-    def capital_breakdown(self, total_usd: Decimal, reserved_gas_usd: Decimal, at_risk_usd: Decimal) -> dict[str, Decimal]:
+    def capital_breakdown(
+        self, total_usd: Decimal, reserved_gas_usd: Decimal, at_risk_usd: Decimal
+    ) -> dict[str, Decimal]:
         r = self.settings.risk
         emergency = min(total_usd, r.emergency_reserve_usd)
         inventory = (total_usd - emergency) * r.inventory_reserve_pct / 100

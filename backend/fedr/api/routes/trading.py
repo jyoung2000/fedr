@@ -66,9 +66,42 @@ async def state(app=Depends(require_app)):
         "active": [trade_detail(t) for t in app.executor.active.values()],
         "recent": [trade_summary(t) for t in reversed(app.executor.recent[-30:])],
         "shadow": {**(await app.repo.shadow_summary()), **app.shadow.stats},
-        "rebalance": [{"from": r.from_venue, "to": r.to_venue, "asset": r.asset, "amount": str(r.amount), "cost_usd": str(r.estimated_cost_usd), "benefit_usd": str(r.estimated_benefit_usd), "net_usd": str(r.net_benefit_usd), "reason": r.reason} for r in ctx.rebalancer.recommend()],
-        "inventory": [{"venue": l.venue, "asset": l.asset, "available": str(l.available), "reserved": str(l.reserved), "pending": str(l.pending), "target": str(l.target), "minimum": str(l.minimum), "maximum": str(l.maximum) if l.maximum is not None else None, "usd": str(l.usd_value) if l.usd_value is not None else None, "kind": l.kind} for l in ctx.inventory.lines()],
-        "paper": {"editable": app.mode in (TradingMode.PAPER, TradingMode.SIMULATION), "starting_balances": {v: {a: str(x) for a, x in b.items()} for v, b in s.paper.starting_balances.items()}, "stress_multiplier": str(s.paper.stress_multiplier), "latency_ms": s.paper.latency_ms},
+        "rebalance": [
+            {
+                "from": r.from_venue,
+                "to": r.to_venue,
+                "asset": r.asset,
+                "amount": str(r.amount),
+                "cost_usd": str(r.estimated_cost_usd),
+                "benefit_usd": str(r.estimated_benefit_usd),
+                "net_usd": str(r.net_benefit_usd),
+                "reason": r.reason,
+            }
+            for r in ctx.rebalancer.recommend()
+        ],
+        "inventory": [
+            {
+                "venue": l.venue,
+                "asset": l.asset,
+                "available": str(l.available),
+                "reserved": str(l.reserved),
+                "pending": str(l.pending),
+                "target": str(l.target),
+                "minimum": str(l.minimum),
+                "maximum": str(l.maximum) if l.maximum is not None else None,
+                "usd": str(l.usd_value) if l.usd_value is not None else None,
+                "kind": l.kind,
+            }
+            for l in ctx.inventory.lines()
+        ],
+        "paper": {
+            "editable": app.mode in (TradingMode.PAPER, TradingMode.SIMULATION),
+            "starting_balances": {
+                v: {a: str(x) for a, x in b.items()} for v, b in s.paper.starting_balances.items()
+            },
+            "stress_multiplier": str(s.paper.stress_multiplier),
+            "latency_ms": s.paper.latency_ms,
+        },
         "experience": ctx.experience.summary()[:20],
     }
 
@@ -100,7 +133,26 @@ async def paper_funds(body: Funds, app=Depends(require_app)):
 @router.get("/trading/shadow/records")
 async def shadow_records(app=Depends(require_app), limit: int = 100):
     rows = await app.repo.list_shadow(limit)
-    return {"summary": await app.repo.shadow_summary(), "items": [{"id": r.id, "ts": r.ts.isoformat(), "would_trade": r.would_trade, "strategy": r.strategy, "pair": r.pair, "route": r.route, "size_base": r.size_base, "predicted_profit": r.predicted_profit, "worst_case_profit": r.worst_case_profit, "estimated_costs": r.estimated_costs, "hypothetical_profit": r.hypothetical_profit, "reason": r.reason} for r in rows]}
+    return {
+        "summary": await app.repo.shadow_summary(),
+        "items": [
+            {
+                "id": r.id,
+                "ts": r.ts.isoformat(),
+                "would_trade": r.would_trade,
+                "strategy": r.strategy,
+                "pair": r.pair,
+                "route": r.route,
+                "size_base": r.size_base,
+                "predicted_profit": r.predicted_profit,
+                "worst_case_profit": r.worst_case_profit,
+                "estimated_costs": r.estimated_costs,
+                "hypothetical_profit": r.hypothetical_profit,
+                "reason": r.reason,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.post("/trading/shadow/clear")
@@ -121,5 +173,7 @@ class InventoryTargetBody(BaseModel):
 @router.post("/trading/inventory/target")
 async def inventory_target(body: InventoryTargetBody, app=Depends(require_app)):
     app.ctx.inventory.set_targets(body.venue, body.asset.upper(), body.target, body.minimum, body.maximum)
-    await app.repo.upsert_inventory(app.mode, body.venue, body.asset.upper(), body.target, body.minimum, body.maximum)
+    await app.repo.upsert_inventory(
+        app.mode, body.venue, body.asset.upper(), body.target, body.minimum, body.maximum
+    )
     return {"ok": True}

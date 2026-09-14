@@ -46,7 +46,15 @@ async def login(body: LoginBody, request: Request, response: Response):
     if not constant_time_equals(body.token, app.env.auth_token):
         await asyncio.sleep(0.5)
         raise HTTPException(401, "invalid token")
-    response.set_cookie(COOKIE, body.token, httponly=True, samesite="strict", secure=app.env.secure_cookies, max_age=app.settings.security.session_timeout_minutes * 60, path="/")
+    response.set_cookie(
+        COOKIE,
+        body.token,
+        httponly=True,
+        samesite="strict",
+        secure=app.env.secure_cookies,
+        max_age=app.settings.security.session_timeout_minutes * 60,
+        path="/",
+    )
     return {"ok": True}
 
 
@@ -76,7 +84,12 @@ async def status(app=Depends(require_app)):
         "status_message": app.status_message,
         "startup": app.startup_check.as_dict() if app.startup_check else None,
         "gateway_ok": app.gateway_ok,
-        "scan": {"count": app.opportunities.scan_count, "last_ms": app.opportunities.last_scan_ms, "duration_ms": app.opportunities.last_scan_duration_ms, "interval_ms": s.general.scan_interval_ms},
+        "scan": {
+            "count": app.opportunities.scan_count,
+            "last_ms": app.opportunities.last_scan_ms,
+            "duration_ms": app.opportunities.last_scan_duration_ms,
+            "interval_ms": s.general.scan_interval_ms,
+        },
         "open_trades": len(ctx.open_trade_ids),
         "gas": ctx.gas_oracle.all(),
         "auth_required": bool(app.env.auth_token),
@@ -121,7 +134,13 @@ class BreakerReset(BaseModel):
 async def reset_breakers(body: BreakerReset, app=Depends(require_app)):
     reason = CircuitBreakerReason(body.reason) if body.reason else None
     n = await app.ctx.breakers.reset(reason, body.scope)
-    await app.repo.audit(app.mode, "circuit_breaker", f"Circuit breaker(s) reset by user ({n})", {"reason": body.reason, "scope": body.scope}, actor="user")
+    await app.repo.audit(
+        app.mode,
+        "circuit_breaker",
+        f"Circuit breaker(s) reset by user ({n})",
+        {"reason": body.reason, "scope": body.scope},
+        actor="user",
+    )
     return {"reset": n, "active": [b.as_dict() for b in app.ctx.breakers.active]}
 
 
@@ -159,14 +178,27 @@ async def events(request: Request, app=Depends(require_app)):
                 try:
                     ev = await asyncio.wait_for(q.get(), timeout=1.0)
                     yield f"event: {ev['kind']}\ndata: {json.dumps(ev)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 if now_ms() - last_snapshot >= 1000:
                     last_snapshot = now_ms()
                     opps = app.opportunities.ranked()[:8]
-                    snap = {"ts": now_ms(), "mode": app.mode.value, "emergency_stop": app.ctx.emergency_stop, "breakers": len(app.ctx.breakers.active), "opportunities": [opportunity_summary(o) for o in opps], "capital": app.capital_summary(), "open_trades": [trade_summary(t) for t in app.executor.active.values()], "daily_pnl": str(app.ctx.daily_pnl_usd)}
+                    snap = {
+                        "ts": now_ms(),
+                        "mode": app.mode.value,
+                        "emergency_stop": app.ctx.emergency_stop,
+                        "breakers": len(app.ctx.breakers.active),
+                        "opportunities": [opportunity_summary(o) for o in opps],
+                        "capital": app.capital_summary(),
+                        "open_trades": [trade_summary(t) for t in app.executor.active.values()],
+                        "daily_pnl": str(app.ctx.daily_pnl_usd),
+                    }
                     yield f"event: snapshot\ndata: {json.dumps(snap)}\n\n"
         finally:
             app.unsubscribe(q)
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

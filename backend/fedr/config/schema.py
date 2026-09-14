@@ -4,6 +4,7 @@ The main Settings page only shows a handful of high-level controls; the full
 document below is what the engines consume. Risk profiles CONSERVATIVE and
 BALANCED overwrite the numeric limits; CUSTOM leaves them as edited.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -25,7 +26,9 @@ class GeneralSettings(BaseModel):
         default_factory=lambda: ["BTC/USDC", "ETH/USDC", "SOL/USDC", "BTC/USDT", "ETH/USDT", "SOL/USDT"]
     )
     quote_assets: list[str] = Field(default_factory=lambda: ["USDC", "USDT", "USD"])
-    dexes: list[str] = Field(default_factory=lambda: ["jupiter", "uniswap-base", "uniswap-arbitrum"])  # Gateway venues to scan
+    dexes: list[str] = Field(
+        default_factory=lambda: ["jupiter", "uniswap-base", "uniswap-arbitrum"]
+    )  # Gateway venues to scan
     scan_interval_ms: int = 1500
     bot_enabled: bool = True  # master on/off for the scanner + auto-execution
 
@@ -132,12 +135,18 @@ class GasSettings(BaseModel):
 
 class SlippageSettings(BaseModel):
     default_max_pct: Dec = Dec("0.30")
-    per_asset_max_pct: dict[str, Dec] = Field(default_factory=lambda: {"BTC": Dec("0.15"), "ETH": Dec("0.20")})
+    per_asset_max_pct: dict[str, Dec] = Field(
+        default_factory=lambda: {"BTC": Dec("0.15"), "ETH": Dec("0.20")}
+    )
     per_venue_max_pct: dict[str, Dec] = Field(default_factory=dict)
     per_route_max_pct: dict[str, Dec] = Field(default_factory=dict)
     # trade-size tiers in USD -> max slippage pct
     size_tiers: list[tuple[Dec, Dec]] = Field(
-        default_factory=lambda: [(Dec("100"), Dec("0.50")), (Dec("1000"), Dec("0.30")), (Dec("10000"), Dec("0.15"))]
+        default_factory=lambda: [
+            (Dec("100"), Dec("0.50")),
+            (Dec("1000"), Dec("0.30")),
+            (Dec("10000"), Dec("0.15")),
+        ]
     )
     dex_slippage_tolerance_pct: Dec = Dec("0.50")  # minAmountOut tolerance submitted with swaps
 
@@ -163,9 +172,27 @@ class PaperSettings(BaseModel):
     # Keys are exchange ids (paper market data via public CCXT endpoints) or chain names (bot wallet per chain).
     starting_balances: dict[str, dict[str, Dec]] = Field(
         default_factory=lambda: {
-            "kraken": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
-            "coinbase": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
-            "binance": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
+            "kraken": {
+                "USDC": Dec("1200"),
+                "USDT": Dec("300"),
+                "BTC": Dec("0.004"),
+                "ETH": Dec("0.12"),
+                "SOL": Dec("2.5"),
+            },
+            "coinbase": {
+                "USDC": Dec("1200"),
+                "USDT": Dec("300"),
+                "BTC": Dec("0.004"),
+                "ETH": Dec("0.12"),
+                "SOL": Dec("2.5"),
+            },
+            "binance": {
+                "USDC": Dec("1200"),
+                "USDT": Dec("300"),
+                "BTC": Dec("0.004"),
+                "ETH": Dec("0.12"),
+                "SOL": Dec("2.5"),
+            },
             "solana": {"USDC": Dec("1000"), "USDT": Dec("200"), "SOL": Dec("4")},
             "base": {"USDC": Dec("600"), "USDT": Dec("100"), "ETH": Dec("0.09")},
             "arbitrum": {"USDC": Dec("600"), "USDT": Dec("100"), "ETH": Dec("0.09")},
@@ -280,7 +307,11 @@ RISK_PROFILES: dict[RiskProfile, dict[str, dict[str, Any]]] = {
             "max_failed_trades_per_hour": 3,
             "allow_degraded_venues": False,
         },
-        "gas": {"max_gas_per_trade_usd": Dec("2.00"), "max_gas_pct_of_gross": Dec("10"), "stress_multiplier": Dec("1.5")},
+        "gas": {
+            "max_gas_per_trade_usd": Dec("2.00"),
+            "max_gas_pct_of_gross": Dec("10"),
+            "stress_multiplier": Dec("1.5"),
+        },
     },
     RiskProfile.BALANCED: {
         "trading": {
@@ -305,7 +336,11 @@ RISK_PROFILES: dict[RiskProfile, dict[str, dict[str, Any]]] = {
             "max_failed_trades_per_hour": 5,
             "allow_degraded_venues": False,
         },
-        "gas": {"max_gas_per_trade_usd": Dec("4.00"), "max_gas_pct_of_gross": Dec("15"), "stress_multiplier": Dec("1.5")},
+        "gas": {
+            "max_gas_per_trade_usd": Dec("4.00"),
+            "max_gas_pct_of_gross": Dec("15"),
+            "stress_multiplier": Dec("1.5"),
+        },
     },
 }
 

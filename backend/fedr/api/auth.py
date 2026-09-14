@@ -1,4 +1,5 @@
 """API authentication: optional bearer token (header or cookie) + CSRF guard for cookie auth."""
+
 from __future__ import annotations
 
 from fastapi import HTTPException, Request

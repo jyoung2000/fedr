@@ -1,4 +1,5 @@
 """Decimal helpers. All engine arithmetic uses Decimal - never float."""
+
 from __future__ import annotations
 
 from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_EVEN, Decimal, InvalidOperation, getcontext

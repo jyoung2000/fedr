@@ -9,7 +9,9 @@ from fedr.security.redaction import structlog_redactor
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
-    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), stream=sys.stdout, format="%(message)s")
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO), stream=sys.stdout, format="%(message)s"
+    )
     for noisy in ("ccxt", "httpx", "httpcore", "websockets", "aiosqlite", "urllib3", "web3", "asyncio"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     processors: list = [
@@ -20,7 +22,9 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]
-    processors.append(structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer(colors=False))
+    processors.append(
+        structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer(colors=False)
+    )
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level.upper(), logging.INFO)),

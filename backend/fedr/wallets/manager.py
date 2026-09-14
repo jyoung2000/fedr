@@ -7,6 +7,7 @@
 * Backups are exported as passphrase-encrypted keystores (EVM: Web3 Secret
   Storage v3 via eth_account; Solana: scrypt + AES-GCM JSON) - ciphertext only.
 """
+
 from __future__ import annotations
 
 import base64
@@ -43,7 +44,16 @@ class WalletInfo:
     mode: str
 
     def as_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "family": self.family, "address": self.address, "label": self.label, "kind": self.kind, "provider": self.provider, "backed_up": self.backed_up, "mode": self.mode}
+        return {
+            "id": self.id,
+            "family": self.family,
+            "address": self.address,
+            "label": self.label,
+            "kind": self.kind,
+            "provider": self.provider,
+            "backed_up": self.backed_up,
+            "mode": self.mode,
+        }
 
 
 class WalletManager:
@@ -77,10 +87,21 @@ class WalletManager:
 
     @staticmethod
     def _info(w: Wallet) -> WalletInfo:
-        return WalletInfo(id=w.id, family=w.chain, address=w.address, label=w.label, kind=w.kind, provider=w.provider, backed_up=w.backed_up, mode=w.mode)
+        return WalletInfo(
+            id=w.id,
+            family=w.chain,
+            address=w.address,
+            label=w.label,
+            kind=w.kind,
+            provider=w.provider,
+            backed_up=w.backed_up,
+            mode=w.mode,
+        )
 
     # ---- creation / import --------------------------------------------------------------
-    async def create_bot_wallet(self, family: str, label: str | None = None, mode: str = "live") -> WalletInfo:
+    async def create_bot_wallet(
+        self, family: str, label: str | None = None, mode: str = "live"
+    ) -> WalletInfo:
         if family == "evm":
             acct = Account.create(secrets.token_bytes(32).hex())
             address, secret = acct.address, acct.key.hex()
@@ -91,7 +112,9 @@ class WalletManager:
             raise ValueError("family must be evm or solana")
         return await self._store(family, address, secret, label or f"Bot {family.upper()} wallet", mode)
 
-    async def import_bot_wallet(self, family: str, private_key: str, label: str | None = None, mode: str = "live") -> WalletInfo:
+    async def import_bot_wallet(
+        self, family: str, private_key: str, label: str | None = None, mode: str = "live"
+    ) -> WalletInfo:
         private_key = private_key.strip()
         if family == "evm":
             acct = Account.from_key(private_key)
@@ -112,18 +135,39 @@ class WalletManager:
 
     async def _store(self, family: str, address: str, secret: str, label: str, mode: str) -> WalletInfo:
         wid = new_id("wal")
-        w = Wallet(id=wid, chain=family, address=address, label=label, kind="bot", provider=None, key_enc=self.box.encrypt(secret, aad=wid), backed_up=False, mode=mode)
+        w = Wallet(
+            id=wid,
+            chain=family,
+            address=address,
+            label=label,
+            kind="bot",
+            provider=None,
+            key_enc=self.box.encrypt(secret, aad=wid),
+            backed_up=False,
+            mode=mode,
+        )
         self._wallets[wid] = w
         if self.repo is not None:
             await self.repo.upsert_wallet(w)
         return self._info(w)
 
-    async def add_external_wallet(self, family: str, address: str, provider: str, label: str | None = None) -> WalletInfo:
+    async def add_external_wallet(
+        self, family: str, address: str, provider: str, label: str | None = None
+    ) -> WalletInfo:
         for w in self._wallets.values():
             if w.kind == "external" and w.address.lower() == address.lower():
                 return self._info(w)
         wid = new_id("ext")
-        w = Wallet(id=wid, chain=family, address=address, label=label or f"{provider} wallet", kind="external", provider=provider, key_enc=None, backed_up=True)
+        w = Wallet(
+            id=wid,
+            chain=family,
+            address=address,
+            label=label or f"{provider} wallet",
+            kind="external",
+            provider=provider,
+            key_enc=None,
+            backed_up=True,
+        )
         self._wallets[wid] = w
         if self.repo is not None:
             await self.repo.upsert_wallet(w)
@@ -188,8 +232,20 @@ class WalletManager:
     @staticmethod
     def decrypt_solana_keystore(ks: dict[str, Any], passphrase: str) -> str:
         p = ks["kdfparams"]
-        key = Scrypt(salt=base64.b64decode(p["salt"]), length=int(p["dklen"]), n=int(p["n"]), r=int(p["r"]), p=int(p["p"])).derive(passphrase.encode())
-        return AESGCM(key).decrypt(base64.b64decode(ks["nonce"]), base64.b64decode(ks["ciphertext"]), b"fedr-solana-keystore").decode()
+        key = Scrypt(
+            salt=base64.b64decode(p["salt"]),
+            length=int(p["dklen"]),
+            n=int(p["n"]),
+            r=int(p["r"]),
+            p=int(p["p"]),
+        ).derive(passphrase.encode())
+        return (
+            AESGCM(key)
+            .decrypt(
+                base64.b64decode(ks["nonce"]), base64.b64decode(ks["ciphertext"]), b"fedr-solana-keystore"
+            )
+            .decode()
+        )
 
 
 def deposit_qr_svg(payload: str) -> str:
@@ -205,7 +261,16 @@ def deposit_qr_svg(payload: str) -> str:
     return buf.getvalue().decode()
 
 
-MIN_RECOMMENDED_DEPOSIT_USD: dict[str, Decimal] = {"solana": D("25"), "ethereum": D("250"), "base": D("25"), "arbitrum": D("25"), "optimism": D("25"), "polygon": D("25"), "bsc": D("25"), "avalanche": D("25")}
+MIN_RECOMMENDED_DEPOSIT_USD: dict[str, Decimal] = {
+    "solana": D("25"),
+    "ethereum": D("250"),
+    "base": D("25"),
+    "arbitrum": D("25"),
+    "optimism": D("25"),
+    "polygon": D("25"),
+    "bsc": D("25"),
+    "avalanche": D("25"),
+}
 NETWORK_WARNINGS: dict[str, str] = {
     "solana": "Send only Solana (SPL) assets to this address. Sending from another network will lose funds.",
     "ethereum": "Send only on Ethereum mainnet. Gas on Ethereum is expensive; keep enough ETH for gas.",

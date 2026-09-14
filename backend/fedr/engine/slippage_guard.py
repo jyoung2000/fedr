@@ -1,4 +1,5 @@
 """SLIPPAGE GUARD - asset / venue / route / size specific slippage limits."""
+
 from __future__ import annotations
 
 from decimal import Decimal

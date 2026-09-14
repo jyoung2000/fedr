@@ -15,6 +15,7 @@ Design
   (stressed slippage, fees, gas and doubled allowances). Both must clear their
   thresholds. All decisions are deterministic and explainable in one sentence.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -72,7 +73,9 @@ class ProfitGuard:
                 f"leg sizes differ (buy {buy.base_amount} vs sell {sell.base_amount}); evaluated at {size}"
             )
         if not buy.fully_fillable:
-            reasons.append(f"insufficient depth on {buy.venue} to buy {size} (only {buy.depth_available_base} available)")
+            reasons.append(
+                f"insufficient depth on {buy.venue} to buy {size} (only {buy.depth_available_base} available)"
+            )
         if not sell.fully_fillable:
             reasons.append(
                 f"insufficient depth on {sell.venue} to sell {size} (only {sell.depth_available_base} available)"
@@ -151,7 +154,9 @@ class ProfitGuard:
             exp.rebalance_allowance = wc.rebalance_allowance = ZERO
             exp.latency_allowance = wc.latency_allowance = ZERO
             exp.partial_fill_allowance = wc.partial_fill_allowance = ZERO
-            exp.failure_reserve = wc.gas * Decimal("0.5")  # expected cost of reverts (documented assumption: 50% weight)
+            exp.failure_reserve = wc.gas * Decimal(
+                "0.5"
+            )  # expected cost of reverts (documented assumption: 50% weight)
             wc.failure_reserve = wc.gas  # worst case: a full revert on top of a successful retry
             tol = notional * Decimal(s.flash_loan.max_slippage_bps) / Decimal(10_000)
             wc.slippage += tol  # min-out tolerance fully consumed
@@ -163,8 +168,12 @@ class ProfitGuard:
             exp.partial_fill_allowance = notional * t.partial_fill_allowance_pct / HUNDRED
             wc.partial_fill_allowance = exp.partial_fill_allowance * 2
             exp.failure_reserve = notional * t.failure_reserve_pct / HUNDRED
-            wc.failure_reserve = exp.failure_reserve * 2 + (wc.gas if on_chain else ZERO)  # a failed tx still burns gas
-        buffer_pct = t.safety_buffer_pct + max(ZERO, D(inp.experience_extra_pct)) + D(inp.stablecoin_haircut_pct)
+            wc.failure_reserve = exp.failure_reserve * 2 + (
+                wc.gas if on_chain else ZERO
+            )  # a failed tx still burns gas
+        buffer_pct = (
+            t.safety_buffer_pct + max(ZERO, D(inp.experience_extra_pct)) + D(inp.stablecoin_haircut_pct)
+        )
         exp.safety_buffer = notional * buffer_pct / HUNDRED
         wc.safety_buffer = exp.safety_buffer
 
@@ -177,13 +186,17 @@ class ProfitGuard:
             mev_pct = s.flash_loan.mev_reserve_pct if s.flash_loan.mev_aware else ZERO
             exp.mev_reserve = notional * mev_pct / HUNDRED
             wc.mev_reserve = exp.mev_reserve * 2
-            capital_required = exp.gas + exp.priority_fee + exp.flash_loan_fee  # borrowed principal is repaid atomically
+            capital_required = (
+                exp.gas + exp.priority_fee + exp.flash_loan_fee
+            )  # borrowed principal is repaid atomically
             if s.flash_loan.require_simulation and fl.simulation_passed is not True:
                 reasons.append("flash loan: transaction simulation has not passed")
             if s.flash_loan.require_atomic and not fl.atomic:
                 reasons.append("flash loan: route is not atomically executable")
             if fl.loan_amount_usd > s.flash_loan.max_loan_usd:
-                reasons.append(f"flash loan {fmt_money(fl.loan_amount_usd)} exceeds maximum {fmt_money(s.flash_loan.max_loan_usd)}")
+                reasons.append(
+                    f"flash loan {fmt_money(fl.loan_amount_usd)} exceeds maximum {fmt_money(s.flash_loan.max_loan_usd)}"
+                )
             if fl.loan_amount_usd > s.risk.max_flash_loan_usd:
                 reasons.append("flash loan exceeds risk-engine maximum")
 
@@ -226,7 +239,9 @@ class ProfitGuard:
         if on_chain and inp.gas is not None and gross > 0:
             gas_pct = pct(exp.gas + exp.priority_fee, gross)
             if gas_pct > s.gas.max_gas_pct_of_gross:
-                reasons.append(f"gas is {fmt_pct(gas_pct)} of gross profit (max {fmt_pct(s.gas.max_gas_pct_of_gross)})")
+                reasons.append(
+                    f"gas is {fmt_pct(gas_pct)} of gross profit (max {fmt_pct(s.gas.max_gas_pct_of_gross)})"
+                )
             if expected_net < s.gas.min_profit_after_gas_usd:
                 reasons.append(
                     f"profit after gas {fmt_money(expected_net)} below minimum {fmt_money(s.gas.min_profit_after_gas_usd)}"

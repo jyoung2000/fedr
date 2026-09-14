@@ -5,6 +5,7 @@ GET routes take query params, POST routes JSON bodies; ``amount`` is always in
 ``baseToken``; ``side`` is ``SELL``/``BUY``; ``slippagePct`` is a percentage.
 Router quotes return a ``quoteId`` that ``execute-quote`` consumes.
 """
+
 from __future__ import annotations
 
 import time
@@ -85,7 +86,9 @@ class GatewayClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def _request(self, method: str, path: str, *, params: dict | None = None, json: dict | None = None) -> Any:
+    async def _request(
+        self, method: str, path: str, *, params: dict | None = None, json: dict | None = None
+    ) -> Any:
         t0 = time.perf_counter()
         try:
             r = await self._client.request(method, path, params=params, json=json)
@@ -98,7 +101,12 @@ class GatewayClient:
                 body = r.json()
             except Exception:
                 body = {"message": r.text}
-            raise GatewayError(str(body.get("message") or body.get("error") or r.text)[:500], status=r.status_code, code=body.get("code"), payload=body)
+            raise GatewayError(
+                str(body.get("message") or body.get("error") or r.text)[:500],
+                status=r.status_code,
+                code=body.get("code"),
+                payload=body,
+            )
         if not r.content:
             return None
         return r.json()
@@ -134,10 +142,14 @@ class GatewayClient:
             fee_asset=str(d.get("feeAsset") or ""),
             fee_native=D(d.get("fee") or 0),
             gas_type=d.get("gasType"),
-            max_priority_fee=D(d["maxPriorityFeePerGas"]) if d.get("maxPriorityFeePerGas") is not None else None,
+            max_priority_fee=D(d["maxPriorityFeePerGas"])
+            if d.get("maxPriorityFeePerGas") is not None
+            else None,
         )
 
-    async def balances(self, chain: str, network: str, address: str, tokens: list[str] | None = None) -> dict[str, Decimal]:
+    async def balances(
+        self, chain: str, network: str, address: str, tokens: list[str] | None = None
+    ) -> dict[str, Decimal]:
         body: dict[str, Any] = {"network": network, "address": address}
         if tokens:
             body["tokens"] = tokens
@@ -145,13 +157,29 @@ class GatewayClient:
         return {k: D(v) for k, v in (d.get("balances") or {}).items()}
 
     async def poll(self, chain: str, network: str, signature: str) -> dict:
-        return await self._request("POST", f"/chains/{chain}/poll", json={"network": network, "signature": signature}) or {}
+        return (
+            await self._request(
+                "POST", f"/chains/{chain}/poll", json={"network": network, "signature": signature}
+            )
+            or {}
+        )
 
-    async def allowances(self, network: str, address: str, spender: str, tokens: list[str]) -> dict[str, Decimal]:
-        d = await self._request("POST", "/chains/ethereum/allowances", json={"network": network, "address": address, "spender": spender, "tokens": tokens}) or {}
+    async def allowances(
+        self, network: str, address: str, spender: str, tokens: list[str]
+    ) -> dict[str, Decimal]:
+        d = (
+            await self._request(
+                "POST",
+                "/chains/ethereum/allowances",
+                json={"network": network, "address": address, "spender": spender, "tokens": tokens},
+            )
+            or {}
+        )
         return {k: D(v) for k, v in (d.get("approvals") or {}).items()}
 
-    async def approve(self, network: str, address: str, spender: str, token: str, amount: str | None = None) -> dict:
+    async def approve(
+        self, network: str, address: str, spender: str, token: str, amount: str | None = None
+    ) -> dict:
         body: dict[str, Any] = {"network": network, "address": address, "spender": spender, "token": token}
         if amount is not None:
             body["amount"] = amount
@@ -166,13 +194,36 @@ class GatewayClient:
         return list(d.get("tokens", []))
 
     # ---- swaps -----------------------------------------------------------------------
-    async def quote_swap(self, connector: str, trading_type: str, network: str, base: str, quote: str, amount: Decimal, side: str, slippage_pct: Decimal, *, wallet_address: str | None = None, pool_address: str | None = None) -> GatewayQuote:
-        params: dict[str, Any] = {"network": network, "baseToken": base, "quoteToken": quote, "amount": str(amount), "side": side.upper(), "slippagePct": str(slippage_pct)}
+    async def quote_swap(
+        self,
+        connector: str,
+        trading_type: str,
+        network: str,
+        base: str,
+        quote: str,
+        amount: Decimal,
+        side: str,
+        slippage_pct: Decimal,
+        *,
+        wallet_address: str | None = None,
+        pool_address: str | None = None,
+    ) -> GatewayQuote:
+        params: dict[str, Any] = {
+            "network": network,
+            "baseToken": base,
+            "quoteToken": quote,
+            "amount": str(amount),
+            "side": side.upper(),
+            "slippagePct": str(slippage_pct),
+        }
         if wallet_address and trading_type == "router":
             params["walletAddress"] = wallet_address
         if pool_address and trading_type in ("amm", "clmm"):
             params["poolAddress"] = pool_address
-        d = await self._request("GET", f"/connectors/{connector}/{trading_type}/quote-swap", params=params) or {}
+        d = (
+            await self._request("GET", f"/connectors/{connector}/{trading_type}/quote-swap", params=params)
+            or {}
+        )
         gas = d.get("gasEstimate")
         return GatewayQuote(
             connector=connector,
@@ -195,22 +246,55 @@ class GatewayClient:
             raw=d,
         )
 
-    async def execute_quote(self, connector: str, network: str, wallet_address: str, quote_id: str, **extra: Any) -> dict:
+    async def execute_quote(
+        self, connector: str, network: str, wallet_address: str, quote_id: str, **extra: Any
+    ) -> dict:
         body = {"walletAddress": wallet_address, "network": network, "quoteId": quote_id, **extra}
         return await self._request("POST", f"/connectors/{connector}/router/execute-quote", json=body) or {}
 
-    async def execute_swap(self, connector: str, trading_type: str, network: str, wallet_address: str, base: str, quote: str, amount: Decimal, side: str, slippage_pct: Decimal, *, pool_address: str | None = None) -> dict:
-        body: dict[str, Any] = {"walletAddress": wallet_address, "network": network, "baseToken": base, "quoteToken": quote, "amount": str(amount), "side": side.upper(), "slippagePct": str(slippage_pct)}
+    async def execute_swap(
+        self,
+        connector: str,
+        trading_type: str,
+        network: str,
+        wallet_address: str,
+        base: str,
+        quote: str,
+        amount: Decimal,
+        side: str,
+        slippage_pct: Decimal,
+        *,
+        pool_address: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {
+            "walletAddress": wallet_address,
+            "network": network,
+            "baseToken": base,
+            "quoteToken": quote,
+            "amount": str(amount),
+            "side": side.upper(),
+            "slippagePct": str(slippage_pct),
+        }
         if pool_address:
             body["poolAddress"] = pool_address
-        return await self._request("POST", f"/connectors/{connector}/{trading_type}/execute-swap", json=body) or {}
+        return (
+            await self._request("POST", f"/connectors/{connector}/{trading_type}/execute-swap", json=body)
+            or {}
+        )
 
     # ---- wallets ---------------------------------------------------------------------
     async def wallets(self) -> list[dict]:
         return list(await self._request("GET", "/wallet/") or [])
 
     async def add_wallet(self, chain: str, private_key: str, set_default: bool = True) -> str:
-        d = await self._request("POST", "/wallet/add", json={"chain": chain, "privateKey": private_key, "setDefault": set_default}) or {}
+        d = (
+            await self._request(
+                "POST",
+                "/wallet/add",
+                json={"chain": chain, "privateKey": private_key, "setDefault": set_default},
+            )
+            or {}
+        )
         return str(d.get("address") or "")
 
     async def remove_wallet(self, chain: str, address: str) -> None:

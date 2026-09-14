@@ -7,6 +7,7 @@ lunch: funding can flip and basis can widen, which is why they are OFF by
 default and use the same Profit Guard with doubled fees and halved
 worst-case funding income.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,7 +38,9 @@ def perp_symbol(pair: str) -> str:
     return f"{base}/{quote}:{quote}"
 
 
-async def evaluate_carry(ctx, strategy: Strategy, spot: VenueConnector, perp: VenueConnector, pair: str, size: Decimal) -> tuple[ExecutionQuote | None, ExecutionQuote | None, CarryQuote | None]:
+async def evaluate_carry(
+    ctx, strategy: Strategy, spot: VenueConnector, perp: VenueConnector, pair: str, size: Decimal
+) -> tuple[ExecutionQuote | None, ExecutionQuote | None, CarryQuote | None]:
     """Return (buy_leg, sell_leg, carry) for a long-spot / short-perp position."""
     psym = perp_symbol(pair)
     book = ctx.hub.get_book(spot.name, pair)
@@ -72,6 +75,17 @@ async def evaluate_carry(ctx, strategy: Strategy, spot: VenueConnector, perp: Ve
     income = (fr or ZERO) * periods * notional
     if strategy is Strategy.BASIS:
         income = income * Decimal("0.5")  # basis strategy does not rely on funding; count only half
-    basis_pct = (sell_q.avg_price - buy_q.avg_price) / buy_q.avg_price * HUNDRED if buy_q.avg_price > 0 else ZERO
-    carry = CarryQuote(perp_symbol=psym, funding_rate=fr, interval_hours=interval, hold_hours=hold, expected_funding_income_usd=income, funding_cost_usd=-income, basis_pct=basis_pct, direction="long_spot_short_perp")
+    basis_pct = (
+        (sell_q.avg_price - buy_q.avg_price) / buy_q.avg_price * HUNDRED if buy_q.avg_price > 0 else ZERO
+    )
+    carry = CarryQuote(
+        perp_symbol=psym,
+        funding_rate=fr,
+        interval_hours=interval,
+        hold_hours=hold,
+        expected_funding_income_usd=income,
+        funding_cost_usd=-income,
+        basis_pct=basis_pct,
+        direction="long_spot_short_perp",
+    )
     return buy_q, sell_q, carry

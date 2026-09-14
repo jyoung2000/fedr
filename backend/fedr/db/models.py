@@ -1,14 +1,15 @@
 """SQLAlchemy ORM models. Money values are stored as TEXT decimals (exact)."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -45,7 +46,9 @@ class Wallet(Base):
     address: Mapped[str] = mapped_column(String(128), index=True)
     label: Mapped[str] = mapped_column(String(80))
     kind: Mapped[str] = mapped_column(String(16))  # bot | external
-    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)  # metamask | phantom | ledger | other
+    provider: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # metamask | phantom | ledger | other
     key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # bot wallets only
     backed_up: Mapped[bool] = mapped_column(Boolean, default=False)
     backup_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -224,7 +227,9 @@ class ExperienceStat(Base):
     """Learned execution statistics per route key (EWMA)."""
 
     __tablename__ = "experience"
-    key: Mapped[str] = mapped_column(String(160), primary_key=True)  # mode|strategy|buy_venue|sell_venue|pair|size_bucket
+    key: Mapped[str] = mapped_column(
+        String(160), primary_key=True
+    )  # mode|strategy|buy_venue|sell_venue|pair|size_bucket
     samples: Mapped[int] = mapped_column(Integer, default=0)
     error_pct_ewma: Mapped[str] = mapped_column(String(40), default="0")  # (estimated-actual)/notional %
     slippage_bias_pct: Mapped[str] = mapped_column(String(40), default="0")
@@ -248,7 +253,9 @@ class ShadowRecord(Base):
     predicted_profit: Mapped[str] = mapped_column(String(40))
     worst_case_profit: Mapped[str] = mapped_column(String(40))
     estimated_costs: Mapped[str] = mapped_column(String(40))
-    hypothetical_profit: Mapped[str | None] = mapped_column(String(40), nullable=True)  # re-priced after latency
+    hypothetical_profit: Mapped[str | None] = mapped_column(
+        String(40), nullable=True
+    )  # re-priced after latency
     reason: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
 

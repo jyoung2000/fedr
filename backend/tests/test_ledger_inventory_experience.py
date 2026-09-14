@@ -4,9 +4,9 @@ from decimal import Decimal
 import pytest
 
 from fedr.config.schema import RebalanceSettings
+from fedr.connectors.paper.ledger import PaperLedger
 from fedr.core.enums import OrderSide, Strategy, TradingMode
 from fedr.core.models import Balance
-from fedr.connectors.paper.ledger import PaperLedger
 from fedr.engine.experience import ExperienceEngine, route_key, size_bucket
 from fedr.engine.inventory import InventoryManager
 from fedr.engine.rebalancer import Rebalancer
@@ -68,7 +68,12 @@ def test_rebalancer_recommends_only_when_economic():
     for _ in range(40):
         rb.note_blocked_by_inventory("coinbase", "USDC", D("4"))
     recs = rb.recommend()
-    assert recs and recs[0].from_venue == "kraken" and recs[0].to_venue == "coinbase" and recs[0].net_benefit_usd >= 5
+    assert (
+        recs
+        and recs[0].from_venue == "kraken"
+        and recs[0].to_venue == "coinbase"
+        and recs[0].net_benefit_usd >= 5
+    )
 
 
 def test_experience_engine_learns_extra_buffer_and_caps():
@@ -78,10 +83,28 @@ def test_experience_engine_learns_extra_buffer_and_caps():
         assert k.endswith("|s") and size_bucket(D("50")) == "xs"
         assert e.extra_buffer_pct(k) == 0
         for _ in range(5):  # route repeatedly costs 0.04% more than predicted
-            await e.record(k, notional_usd=D("1000"), prediction_error_usd=D("0.4"), slippage_variance_usd=D("0.3"), fee_variance_usd=D("0.1"), gas_variance_usd=D("0"), filled=True, latency_ms=300)
+            await e.record(
+                k,
+                notional_usd=D("1000"),
+                prediction_error_usd=D("0.4"),
+                slippage_variance_usd=D("0.3"),
+                fee_variance_usd=D("0.1"),
+                gas_variance_usd=D("0"),
+                filled=True,
+                latency_ms=300,
+            )
         assert D("0.03") < e.extra_buffer_pct(k) <= D("0.05")
         for _ in range(10):
-            await e.record(k, notional_usd=D("1000"), prediction_error_usd=D("50"), slippage_variance_usd=D("0"), fee_variance_usd=D("0"), gas_variance_usd=D("0"), filled=False, latency_ms=300)
+            await e.record(
+                k,
+                notional_usd=D("1000"),
+                prediction_error_usd=D("50"),
+                slippage_variance_usd=D("0"),
+                fee_variance_usd=D("0"),
+                gas_variance_usd=D("0"),
+                filled=False,
+                latency_ms=300,
+            )
         assert e.extra_buffer_pct(k) == D("0.25")  # capped - learning never becomes the authority
         e.enabled = False
         assert e.extra_buffer_pct(k) == 0

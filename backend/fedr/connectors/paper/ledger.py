@@ -1,4 +1,5 @@
 """Persistent simulated balances for PAPER / SIMULATION modes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,11 +17,16 @@ class PaperLedger:
 
     # ---- setup -------------------------------------------------------------------
     def seed(self, balances: dict[str, dict[str, Decimal]]) -> None:
-        self._bal = {v: {a: Balance(asset=a, free=D(x)) for a, x in assets.items()} for v, assets in balances.items()}
+        self._bal = {
+            v: {a: Balance(asset=a, free=D(x)) for a, x in assets.items()} for v, assets in balances.items()
+        }
         self.dirty = True
 
     def load(self, balances: dict[str, dict[str, tuple[Decimal, Decimal]]]) -> None:
-        self._bal = {v: {a: Balance(asset=a, free=f, used=u) for a, (f, u) in assets.items()} for v, assets in balances.items()}
+        self._bal = {
+            v: {a: Balance(asset=a, free=f, used=u) for a, (f, u) in assets.items()}
+            for v, assets in balances.items()
+        }
 
     def dump(self) -> dict[str, dict[str, tuple[Decimal, Decimal]]]:
         return {v: {a: (b.free, b.used) for a, b in assets.items()} for v, assets in self._bal.items()}
@@ -67,7 +73,17 @@ class PaperLedger:
             b.free += take
             self.dirty = True
 
-    async def settle_fill(self, venue: str, base: str, quote: str, side, base_amount: Decimal, quote_amount: Decimal, fee_quote: Decimal, reserved: bool = True) -> None:
+    async def settle_fill(
+        self,
+        venue: str,
+        base: str,
+        quote: str,
+        side,
+        base_amount: Decimal,
+        quote_amount: Decimal,
+        fee_quote: Decimal,
+        reserved: bool = True,
+    ) -> None:
         """Apply a fill: BUY consumes quote (+fee) and adds base; SELL the opposite."""
         async with self._lock:
             b_base = self._acct(venue, base)
