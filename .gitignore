@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+frontend/dist/
+backend/fedr/static/
+
+# Runtime data (persisted via Docker volumes)
+data/
+!data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+.env
+gateway/conf/
+gateway/logs/
+gateway/certs/
+
+# Contracts
+contracts/out/
+contracts/cache/
+contracts/lib/
+
+# Misc
+.DS_Store
+*.log
+playwright-report/
+test-results/
