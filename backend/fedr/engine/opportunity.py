@@ -170,7 +170,17 @@ class OpportunityEngine:
                     self.ctx.ledger_venue_for(cand.buy), quote, ZERO
                 )
                 size = max_by_quote
-            if base_avail < size:
+            if cand.sell.kind is VenueKind.PERP:
+                # a perp short is collateralised in quote (1x), it does not sell base inventory
+                coll_avail = self.ctx.inventory.available(self.ctx.ledger_venue_for(cand.sell), quote)
+                base_avail = coll_avail / price_usd * Decimal("0.98")
+                if base_avail < size:
+                    notes.append(f"size capped by {quote} collateral on {cand.sell.name}")
+                    self.ctx.rebalancer.note_blocked_by_inventory(
+                        self.ctx.ledger_venue_for(cand.sell), quote, ZERO
+                    )
+                    size = base_avail
+            elif base_avail < size:
                 notes.append(f"size capped by {base} inventory on {cand.sell.name}")
                 self.ctx.rebalancer.note_blocked_by_inventory(
                     self.ctx.ledger_venue_for(cand.sell), base, ZERO
@@ -336,7 +346,7 @@ class OpportunityEngine:
         reasons.extend(ctx.latency_guard.check(buy_q, sell_q))
         # ---- breakers ----
         breaker_reasons = ctx.breakers.blocks(
-            venue=cand.buy.name, strategy=cand.strategy.value
+            venue=cand.buy.name, strategy=cand.strategy.value, symbol=cand.pair
         ) + ctx.breakers.blocks(
             venue=cand.sell.name,
             chain=(buy_q.chain or sell_q.chain).value if (buy_q.chain or sell_q.chain) else None,

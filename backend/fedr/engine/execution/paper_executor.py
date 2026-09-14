@@ -55,7 +55,7 @@ class PaperExecutor:
     ) -> OrderResult:
         ps = self.settings()
         result = OrderResult(request=req, order_id=new_id("paper"), status=OrderStatus.NEW)
-        base, quote_asset = req.symbol.split("/")
+        base, quote_asset = req.symbol.split(":")[0].split("/")
         lv = ledger_venue(connector)
         # 1. latency
         latency = max(0, ps.latency_ms + int(self.rng.uniform(-ps.latency_jitter_ms, ps.latency_jitter_ms)))
@@ -89,9 +89,14 @@ class PaperExecutor:
         fee_quote = quote_amount * fee_pct / HUNDRED if connector.kind is not VenueKind.DEX else ZERO
         # 5. settle ledger
         try:
-            await self.ledger.settle_fill(
-                lv, base, quote_asset, req.side, fill_base, quote_amount, fee_quote, reserved=True
-            )
+            if connector.kind is VenueKind.PERP:
+                await self.ledger.settle_perp(
+                    lv, quote_asset, req.side, quote_amount, fee_quote, reduce_only=req.reduce_only
+                )
+            else:
+                await self.ledger.settle_fill(
+                    lv, base, quote_asset, req.side, fill_base, quote_amount, fee_quote, reserved=True
+                )
             if connector.kind is VenueKind.DEX and connector.chain is not None and gas_native > 0:
                 await self.ledger.charge_gas(lv, connector.chain.native_token, gas_native)
         except ValueError as exc:

@@ -5,6 +5,7 @@ import { ToastProvider } from "./components/Toast";
 import { AppStateProvider, useAppState } from "./lib/app-state";
 import { Dashboard } from "./pages/Dashboard";
 import { Exchanges } from "./pages/Exchanges";
+import { Health } from "./pages/Health";
 import { History } from "./pages/History";
 import { Opportunities } from "./pages/Opportunities";
 import { OpportunityDetail } from "./pages/OpportunityDetail";
@@ -32,6 +33,7 @@ function Shell() {
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/exchanges" element={<Exchanges />} />
         <Route path="/history" element={<History />} />
+        <Route path="/status" element={<Health />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

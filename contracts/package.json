@@ -1,0 +1,15 @@
+{
+  "name": "fedr-contracts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FlashLoanArbitrage contract - compile with solc-js (Foundry optional)",
+  "scripts": {
+    "compile": "node compile.js",
+    "test": "cd ../backend && python -m pytest tests/test_contract_evm.py -q"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "solc": "0.8.28"
+  },
+  "dependencies": {}
+}

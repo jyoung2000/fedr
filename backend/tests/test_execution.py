@@ -569,7 +569,7 @@ def test_flash_loan_paper_path_aborts_when_unprofitable_after_refresh(harness):
     asyncio.run(run())
 
 
-def test_carry_strategy_is_evaluation_only(harness):
+def test_carry_strategy_not_executed_by_spot_executor(harness):
     async def run():
         from fedr.core.enums import Strategy
         from fedr.sim.venues import SyntheticPerpVenue
@@ -592,8 +592,9 @@ def test_carry_strategy_is_evaluation_only(harness):
         assert (
             o.extra["carry"] is not None and o.profit.expected_costs.funding <= 0
         )  # funding income modelled
+        # the spot executor refuses carry routes: they are opened through the position manager only
         tr = await h.exec.execute(o, trigger="test")
-        assert tr.status is TradeStatus.ABORTED and "evaluation-only" in tr.explanation
+        assert tr.status is TradeStatus.ABORTED and "position manager" in tr.explanation
         assert h.ledger.get("binance-perp", "USDC").used == 0
 
     asyncio.run(run())

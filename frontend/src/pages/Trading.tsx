@@ -17,6 +17,7 @@ import { useSseEvent } from "../lib/sse";
 import type { TradeDetail, TradeRowDetail, TradeSummary, TradingState } from "../lib/types";
 import { InventorySection } from "./trading/InventorySection";
 import { PaperSection } from "./trading/PaperSection";
+import { PositionsSection } from "./trading/PositionsSection";
 import { ShadowSection } from "./trading/ShadowSection";
 
 const MODES: { key: string; label: string; help: string }[] = [
@@ -122,6 +123,8 @@ export function Trading() {
       <Card title={`Active trades (${active.length})`}>
         <Table columns={tradeCols} rows={active} rowKey={(t) => t.id} onRowClick={openTrade} empty={<EmptyState title="No trade in flight" />} />
       </Card>
+
+      <PositionsSection emergencyStop={data.emergency_stop} />
 
       <Card title="Recent trades">
         <Table columns={tradeCols} rows={data.recent} rowKey={(t) => t.id} onRowClick={openTrade} empty={<EmptyState title="No trades yet in this mode">Executed trades appear here with estimated vs realized net.</EmptyState>} />

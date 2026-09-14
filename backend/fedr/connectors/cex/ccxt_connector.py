@@ -626,6 +626,16 @@ class CcxtConnector(VenueConnector):
             raise _map_error(exc) from exc
 
     # ------------------------------------------------------------------ perps / funding
+    async def fetch_server_time_ms(self) -> int | None:
+        if not self.exchange.has.get("fetchTime"):
+            return None
+        try:
+            t = await self.exchange.fetch_time()
+        except Exception as exc:
+            self.health_tracker.record_error()
+            raise _map_error(exc) from exc
+        return int(t) if t is not None else None
+
     async def fetch_funding_rate(self, symbol: str) -> dict | None:
         if not self.exchange.has.get("fetchFundingRate"):
             return None

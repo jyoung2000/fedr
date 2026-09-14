@@ -12,18 +12,28 @@ COOKIE = "fedr_session"
 PUBLIC_PATHS = {"/api/system/health", "/api/auth/login", "/api/auth/status"}
 
 
+def current_token(request: Request) -> str | None:
+    app = getattr(request.app.state, "fedr", None)
+    return getattr(app, "auth_token", None) if app is not None else None
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, token: str | None):
+    """Every /api route (except health/login/status) requires the UI token - there is no unauthenticated mode."""
+
+    def __init__(self, app, token: str | None = None):
         super().__init__(app)
-        self.token = token
+        self.fallback_token = token
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if not self.token or not path.startswith("/api") or path in PUBLIC_PATHS:
+        if not path.startswith("/api") or path in PUBLIC_PATHS:
             return await call_next(request)
+        token = current_token(request) or self.fallback_token
+        if not token:
+            return JSONResponse({"detail": "application is starting"}, status_code=503)
         header = request.headers.get("authorization", "")
         presented = header[7:] if header.lower().startswith("bearer ") else request.cookies.get(COOKIE)
-        if not presented or not constant_time_equals(presented, self.token):
+        if not presented or not constant_time_equals(presented, token):
             return JSONResponse({"detail": "authentication required"}, status_code=401)
         if request.cookies.get(COOKIE) and not header and request.method not in ("GET", "HEAD", "OPTIONS"):
             # cookie-authenticated state change: require the custom header (CSRF guard) and same-origin

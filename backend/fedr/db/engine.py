@@ -6,8 +6,6 @@ from contextlib import asynccontextmanager
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from fedr.db.models import Base
-
 
 class Database:
     def __init__(self, url: str):
@@ -27,9 +25,10 @@ class Database:
 
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
 
-    async def init(self) -> None:
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def init(self) -> list[int]:
+        from fedr.db.migrations import migrate
+
+        return await migrate(self.engine)
 
     async def health(self) -> bool:
         try:

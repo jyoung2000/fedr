@@ -20,6 +20,7 @@ from fedr.core.enums import (
     Strategy,
     TradeStatus,
     TradingMode,
+    VenueKind,
 )
 from fedr.core.logging import get_logger
 from fedr.core.models import (
@@ -55,7 +56,9 @@ class ExecutionEngine:
         self.recent: list[TradeRecord] = []
 
     # ------------------------------------------------------------------ entry
-    async def execute(self, opp: Opportunity, trigger: str = "auto") -> TradeRecord:
+    async def execute(
+        self, opp: Opportunity, trigger: str = "auto", allow_carry: bool = False
+    ) -> TradeRecord:
         ctx = self.ctx
         s = ctx.settings
         tr = TradeRecord(
@@ -96,10 +99,9 @@ class ExecutionEngine:
             return await self._abort(tr, "circuit breaker active")
         if opp.strategy is Strategy.FLASH_LOAN:
             return await self._abort(tr, "flash-loan execution is routed through the flash-loan engine")
-        if opp.strategy in (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS):
+        if opp.strategy in (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS) and not allow_carry:
             return await self._abort(
-                tr,
-                "carry strategies (spot/perp, funding, basis) are evaluation-only in this build: position margin, funding accrual and close-out are not implemented",
+                tr, "carry strategies open positions through the position manager, not the spot executor"
             )
         # ---- re-validate with fresh quotes (never trade on the displayed spread) ----
         cand = self.opps.candidate_for(opp)
@@ -126,8 +128,12 @@ class ExecutionEngine:
         tol = s.trading.leg_price_tolerance_pct / HUNDRED
         buy_fee = D(fresh.buy.fee_pct or 0) / HUNDRED
         quote_needed = fresh.buy.quote_amount * (1 + tol) * (1 + buy_fee)
+        perp_short = fresh.sell.kind is VenueKind.PERP
         try:
-            await self._reserve(tr, buy_v, quote, quote_needed, sell_v, base, fresh.sell.base_amount)
+            if perp_short:  # a perp short is collateralised in quote (1x), not funded with base inventory
+                await self._reserve(tr, buy_v, quote, quote_needed, sell_v, quote, fresh.sell.quote_amount)
+            else:
+                await self._reserve(tr, buy_v, quote, quote_needed, sell_v, base, fresh.sell.base_amount)
         except ValueError as exc:
             return await self._abort(tr, f"reservation failed: {exc}")
         ctx.open_trade_ids.add(tr.id)
@@ -176,7 +182,16 @@ class ExecutionEngine:
                 sell_status=tr.sell.status.value,
                 sell_filled=tr.sell.filled,
             )
-            await self._release_unused(tr, buy_v, quote, quote_needed, sell_v, base)
+            await self._release_unused(
+                tr,
+                buy_v,
+                quote,
+                quote_needed,
+                sell_v,
+                quote if perp_short else base,
+                sell_reserved=fresh.sell.quote_amount if perp_short else None,
+            )
+            await self._note_dex_failures(tr, buy_v, sell_v)
             # ---- imbalance handling ----
             exposure = tr.buy.filled - tr.sell.filled
             if exposure != 0:
@@ -221,6 +236,12 @@ class ExecutionEngine:
         return tr
 
     # ------------------------------------------------------------------ helpers
+    async def submit_leg(
+        self, venue: VenueConnector, req: OrderRequest, quote: ExecutionQuote, perp_close: bool = False
+    ) -> OrderResult:
+        """Public single-leg submission used by the position manager for close-outs (same paper/live path)."""
+        return await self._submit(venue, req, quote)
+
     async def _submit(self, venue: VenueConnector, req: OrderRequest, quote: ExecutionQuote) -> OrderResult:
         if self.ctx.is_simulated_execution and self.ctx.paper_executor is not None:
             return await self.ctx.paper_executor.execute_leg(venue, req, quote)
@@ -255,6 +276,22 @@ class ExecutionEngine:
         r.completed_at_ms = now_ms()
         return r
 
+    async def _note_dex_failures(self, tr: TradeRecord, buy_v, sell_v) -> None:
+        """Failed/rejected DEX legs (reverts, simulation failures, RPC errors) count per chain; repeated
+        failures trip DEX_TX_FAILURE for that chain (2 within 10 minutes)."""
+        for res, v in ((tr.buy, buy_v), (tr.sell, sell_v)):
+            if res is None or v.kind is not VenueKind.DEX or v.chain is None:
+                continue
+            if res.status in (OrderStatus.FAILED, OrderStatus.REJECTED) and res.filled == 0:
+                n = self.ctx.breakers.record(f"dex_fail:{v.chain.value}", window_s=600)
+                tr.log("dex_leg_failed", venue=v.name, error=(res.error or "")[:120], count=n)
+                if n >= 2:
+                    await self.ctx.breakers.trip(
+                        CircuitBreakerReason.DEX_TX_FAILURE,
+                        f"{n} DEX transaction failures on {v.chain.value} in 10 min (last: {v.name}: {(res.error or 'failed')[:80]})",
+                        scope=f"chain:{v.chain.value}",
+                    )
+
     async def _reserve(
         self,
         tr: TradeRecord,
@@ -278,7 +315,14 @@ class ExecutionEngine:
         tr.log("reserved", quote=quote_needed, base=base_needed)
 
     async def _release_unused(
-        self, tr: TradeRecord, buy_v, quote: str, quote_needed: Decimal, sell_v, base: str
+        self,
+        tr: TradeRecord,
+        buy_v,
+        quote: str,
+        quote_needed: Decimal,
+        sell_v,
+        base: str,
+        sell_reserved: Decimal | None = None,
     ) -> None:
         ctx = self.ctx
         if not (ctx.is_simulated_execution and ctx.ledger is not None):
@@ -286,6 +330,10 @@ class ExecutionEngine:
         lb, ls = ctx.ledger_venue_for(buy_v), ctx.ledger_venue_for(sell_v)
         spent = (tr.buy.quote_amount + tr.buy.fee_quote) if tr.buy else ZERO
         await ctx.ledger.release(lb, quote, max(ZERO, quote_needed - spent))
+        if sell_reserved is not None:  # perp short: quote collateral was reserved, not base inventory
+            used = tr.sell.quote_amount if tr.sell and tr.sell.filled > 0 else ZERO
+            await ctx.ledger.release(ls, base, max(ZERO, sell_reserved - used))
+            return
         sold = tr.sell.filled if tr.sell else ZERO
         await ctx.ledger.release(ls, base, max(ZERO, tr.size_base - sold))
 

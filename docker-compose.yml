@@ -11,7 +11,9 @@ services:
     container_name: fedr-app
     restart: unless-stopped
     env_file:
-      - .env
+      # optional: variables may also come from the shell environment (CI, systemd, orchestrators)
+      - path: .env
+        required: false
     environment:
       FEDR_PORT: "8935"
       FEDR_BIND: "0.0.0.0"
@@ -21,7 +23,11 @@ services:
       # bound to the host loopback only - put a reverse proxy with TLS in front to expose it
       - "127.0.0.1:${FEDR_PORT:-8935}:8935"
     volumes:
-      - ./data:/data
+      # Named volume: Docker initialises it with the image's /data ownership (uid 10001), so the
+      # non-root app can write. To use a host directory instead, replace with `./data:/data` AND run
+      # `mkdir -p data && sudo chown -R 10001:10001 data` first - otherwise startup fails safely with
+      # "FEDR_DATA_DIR /data is not writable" (verified in docs/DOCKER_SECURITY_REPORT.md).
+      - fedr-data:/data
     depends_on:
       gateway:
         condition: service_started
@@ -37,7 +43,7 @@ services:
       - ALL
     read_only: true
     tmpfs:
-      - /tmp:size=64m
+      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
     networks:
       - fedr-internal
 
@@ -64,6 +70,9 @@ services:
       - no-new-privileges:true
     networks:
       - fedr-internal
+
+volumes:
+  fedr-data:
 
 networks:
   fedr-internal:

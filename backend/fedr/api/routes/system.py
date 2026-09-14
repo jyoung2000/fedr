@@ -27,25 +27,67 @@ async def health(request: Request):
 @router.get("/auth/status")
 async def auth_status(request: Request):
     app = getattr(request.app.state, "fedr", None)
-    required = bool(app and app.env.auth_token)
+    token = getattr(app, "auth_token", None) if app else None
     header = request.headers.get("authorization", "")
     presented = header[7:] if header.lower().startswith("bearer ") else request.cookies.get(COOKIE)
-    authed = (not required) or bool(presented and app and constant_time_equals(presented, app.env.auth_token))
-    return {"auth_required": required, "authenticated": authed}
+    authed = bool(token and presented and constant_time_equals(presented, token))
+    return {
+        "auth_required": True,
+        "authenticated": authed,
+        "token_source": getattr(app, "auth_token_source", "none") if app else "none",
+        "hint": "Set FEDR_AUTH_TOKEN, or read the generated token from <data dir>/config/ui-token"
+        if not authed
+        else None,
+    }
 
 
 class LoginBody(BaseModel):
     token: str
 
 
+# Login lockout: 5 failures within 10 minutes lock the client address for 10 minutes (in-memory; the
+# constant-time compare + 0.5 s delay remain). The UI token is the only credential FEDR holds.
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_S = 600
+_LOGIN_FAILURES: dict[str, list[float]] = {}
+
+
+def _login_failed(client: str) -> None:
+    import time
+
+    now = time.monotonic()
+    hits = [t for t in _LOGIN_FAILURES.get(client, []) if now - t < LOGIN_WINDOW_S]
+    hits.append(now)
+    _LOGIN_FAILURES[client] = hits[-50:]
+
+
+def _login_locked_for(client: str) -> int:
+    import time
+
+    now = time.monotonic()
+    hits = [t for t in _LOGIN_FAILURES.get(client, []) if now - t < LOGIN_WINDOW_S]
+    if len(hits) >= LOGIN_MAX_FAILURES:
+        return max(1, int(LOGIN_WINDOW_S - (now - hits[0])))
+    return 0
+
+
 @router.post("/auth/login")
 async def login(body: LoginBody, request: Request, response: Response):
     app = getattr(request.app.state, "fedr", None)
-    if not app or not app.env.auth_token:
-        return {"ok": True, "auth_required": False}
-    if not constant_time_equals(body.token, app.env.auth_token):
+    token = getattr(app, "auth_token", None) if app else None
+    if not token:
+        raise HTTPException(503, "application is starting")
+    client = request.client.host if request.client else "unknown"
+    locked = _login_locked_for(client)
+    if locked:
+        raise HTTPException(
+            429, f"too many failed logins; retry in {locked}s", headers={"Retry-After": str(locked)}
+        )
+    if not constant_time_equals(body.token, token):
+        _login_failed(client)
         await asyncio.sleep(0.5)
         raise HTTPException(401, "invalid token")
+    _LOGIN_FAILURES.pop(client, None)
     response.set_cookie(
         COOKIE,
         body.token,
@@ -92,10 +134,43 @@ async def status(app=Depends(require_app)):
         },
         "open_trades": len(ctx.open_trade_ids),
         "gas": ctx.gas_oracle.all(),
-        "auth_required": bool(app.env.auth_token),
+        "auth_required": True,
+        "auth_token_source": app.auth_token_source,
         "version": "0.1.0",
         "market_data_source": "synthetic (SIMULATION)" if app.synthetic is not None else "live",
         "strategies": s.strategies.model_dump(),
+    }
+
+
+@router.get("/system/metrics")
+async def metrics(app=Depends(require_app)):
+    ctx = app.ctx
+    pnl = await app.repo.pnl_summary(app.mode)
+    return {
+        "clock": {
+            c.name: {
+                "drift_ms": c.health_tracker.clock_drift_ms,
+                "checked_ms": c.health_tracker.clock_checked_ms,
+            }
+            for c in app.ctx.connectors.values()
+        },
+        "mode": app.mode.value,
+        "uptime_s": int((now_ms() - app.started_at_ms) / 1000) if app.started_at_ms else 0,
+        "process": app.metrics.as_dict(),
+        "persisted": {
+            "trades": pnl["trades"],
+            "wins": pnl["wins"],
+            **{k: v for k, v in pnl["total"].items()},
+        },
+        "market_data": {
+            "books": len(ctx.hub.books),
+            "venues": ctx.hub.stats,
+            "rejections": ctx.hub.rejections,
+        },
+        "venues": {n: ctx.venue_health(n).value for n in ctx.connectors},
+        "breakers": [b.as_dict() for b in ctx.breakers.active],
+        "open_trades": len(ctx.open_trade_ids),
+        "gas": ctx.gas_oracle.all(),
     }
 
 

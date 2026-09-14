@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-    app.add_middleware(AuthMiddleware, token=env.auth_token)
+    app.add_middleware(AuthMiddleware)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -81,6 +81,51 @@ def create_app() -> FastAPI:
 
     for r in (system, dashboard, opportunities, trading, wallets, exchanges, history, settings, backtest):
         app.include_router(r.router, prefix="/api")
+
+    # ---- health endpoints (unauthenticated, no secrets; used by Docker healthcheck and orchestrators) ----
+    @app.get("/health", include_in_schema=False)
+    async def health_root(request: Request):
+        fedr = getattr(request.app.state, "fedr", None)
+        ok = fedr is not None and fedr.ctx is not None
+        return JSONResponse(
+            {"status": "ok" if ok else "starting", "message": fedr.status_message if fedr else "starting"},
+            status_code=200 if ok else 503,
+        )
+
+    @app.get("/health/live", include_in_schema=False)
+    async def health_live():
+        return {"status": "ok"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    async def health_ready(request: Request):
+        fedr = getattr(request.app.state, "fedr", None)
+        checks: dict[str, bool] = {}
+        if fedr is None or fedr.ctx is None:
+            return JSONResponse({"status": "not-ready", "checks": {"application": False}}, status_code=503)
+        checks["database"] = await fedr.db.health() if fedr.db else False
+        checks["profit_guard"] = fedr.ctx.profit_guard is not None
+        checks["risk_engine"] = fedr.ctx.risk_engine is not None
+        checks["strategy_engine"] = fedr.opportunities is not None
+        checks["scan_loop"] = fedr.opportunities is not None and (
+            fedr.opportunities.last_scan_ms > 0
+            or (fedr.started_at_ms and (__import__("time").time() * 1000 - fedr.started_at_ms) < 60_000)
+        )
+        dex_needed = (
+            fedr.env.gateway_enabled
+            and (
+                fedr.settings.strategies.cex_dex
+                or fedr.settings.strategies.dex_dex
+                or fedr.settings.strategies.flash_loan
+            )
+            and fedr.mode.value not in ("simulation",)
+        )
+        checks["gateway"] = (not dex_needed) or fedr.gateway_ok
+        checks["not_emergency_stopped"] = not fedr.ctx.emergency_stop
+        ready = all(checks.values())
+        return JSONResponse(
+            {"status": "ready" if ready else "not-ready", "checks": checks, "mode": fedr.mode.value},
+            status_code=200 if ready else 503,
+        )
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception):

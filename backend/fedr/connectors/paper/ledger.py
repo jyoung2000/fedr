@@ -103,6 +103,31 @@ class PaperLedger:
                 b_quote.free += quote_amount - fee_quote
             self.dirty = True
 
+    async def settle_perp(
+        self, venue: str, quote: str, side, notional: Decimal, fee_quote: Decimal, reduce_only: bool = False
+    ) -> None:
+        """Linear perpetual leg at 1x (paper model).
+
+        * open short (SELL, not reduce_only): ``notional`` quote moves from the reservation into a
+          ``<quote>:collateral`` bucket (any part not covered by the reservation is taken from free);
+          the taker fee is paid from free.
+        * close (reduce_only BUY): the collateral comes back and the short's P&L
+          (entry notional - exit notional) is booked, minus the fee.
+        """
+        async with self._lock:
+            b = self._acct(venue, quote)
+            coll = self._acct(venue, f"{quote}:collateral")
+            if side.value == "sell" and not reduce_only:
+                moved = min(b.used, notional)
+                b.used -= moved
+                b.free -= (notional - moved) + fee_quote
+                coll.free += notional
+            else:
+                entry = coll.free
+                coll.free = ZERO
+                b.free += entry + (entry - notional) - fee_quote
+            self.dirty = True
+
     async def charge_gas(self, venue: str, native_asset: str, native_amount: Decimal) -> None:
         async with self._lock:
             b = self._acct(venue, native_asset)
@@ -113,7 +138,7 @@ class PaperLedger:
         total = ZERO
         for assets in self._bal.values():
             for a, b in assets.items():
-                px = price_of(a)
+                px = price_of(a.split(":")[0])  # "<asset>:collateral" buckets are still capital
                 if px is not None:
                     total += (b.free + b.used) * px
         return total

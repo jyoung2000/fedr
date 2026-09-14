@@ -53,7 +53,7 @@ export function ModeBadge({ mode, size }: { mode: string | null | undefined; siz
   if (m === "live") {
     return (
       <span className="pill mode-badge mode-live" role="status">
-        LIVE — REAL MONEY
+        LIVE — REAL FUNDS
       </span>
     );
   }

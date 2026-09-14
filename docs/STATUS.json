@@ -1,0 +1,59 @@
+{
+  "name": "FEDR",
+  "version": "0.2.0-rc1",
+  "generated": "2026-09-14",
+  "git": "b456837",
+  "port": 8935,
+  "production_ready": false,
+  "reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, RT-06, RT-07, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
+  "safe_modes_verified": [
+    "simulation",
+    "shadow (offline)"
+  ],
+  "modes_blocked_by_environment": [
+    "paper (real data)",
+    "testnet"
+  ],
+  "modes_must_block": [
+    "live"
+  ],
+  "counts": {
+    "IMPLEMENTED + VERIFIED": 43,
+    "BLOCKED BY EXTERNAL DEPENDENCY": 8,
+    "IMPLEMENTED + PARTIALLY VERIFIED": 16,
+    "IMPLEMENTED + UNVERIFIED": 2,
+    "MUST BLOCK": 1
+  },
+  "critical_open": [
+    "RT-02",
+    "RT-03",
+    "RT-04",
+    "RT-05",
+    "RT-06",
+    "RT-07",
+    "MD-03",
+    "CX-01",
+    "CX-02",
+    "CX-03",
+    "CX-04",
+    "WL-03",
+    "WL-04",
+    "MO-02",
+    "MO-04",
+    "MO-06",
+    "ST-02",
+    "ST-05"
+  ],
+  "tests": {
+    "unit_and_adversarial": "see docs/PRODUCTION_VERIFICATION_REPORT.md",
+    "integration": "see docs/PRODUCTION_VERIFICATION_REPORT.md"
+  },
+  "docs": [
+    "docs/PRODUCTION_VERIFICATION_MATRIX.md",
+    "docs/AUDIT_REPORT.json",
+    "docs/FINAL_PRODUCTION_REPORT.md",
+    "docs/PRODUCTION_VERIFICATION_REPORT.md",
+    "docs/DOCKER_SECURITY_REPORT.md",
+    "docs/UI_QA_REPORT.md"
+  ]
+}

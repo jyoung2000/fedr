@@ -95,3 +95,22 @@ def mask_secret(value: str | None, keep: int = 4) -> str:
     if len(value) <= keep * 2:
         return "*" * len(value)
     return f"{value[:keep]}…{value[-keep:]}"
+
+
+def load_or_create_ui_token(env_value: str | None, data_dir: Path) -> tuple[str, str]:
+    """Return (token, source). The UI/API always require a token: from FEDR_AUTH_TOKEN or a generated file."""
+    if env_value and env_value.strip():
+        if len(env_value.strip()) < 16:
+            raise ValueError("FEDR_AUTH_TOKEN must be at least 16 characters")
+        return env_value.strip(), "env"
+    path = data_dir / "config" / "ui-token"
+    if path.exists():
+        tok = path.read_text().strip()
+        if len(tok) >= 16:
+            return tok, "file"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tok = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(tok)
+    return tok, "generated"

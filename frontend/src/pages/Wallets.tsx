@@ -9,7 +9,7 @@ import { EmptyState, ErrorState } from "../components/States";
 import { StatusPill } from "../components/StatusPill";
 import { useToast } from "../components/Toast";
 import { api, errorMessage } from "../lib/api";
-import { chainLabel, fmtAmount, fmtDateTime, fmtMoney } from "../lib/format";
+import { chainLabel, fmtAmount, fmtMoney } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 import { useSseEvent } from "../lib/sse";
 import type { Wallet, WalletsData } from "../lib/types";
@@ -17,6 +17,8 @@ import { AllowlistManager } from "./wallets/AllowlistManager";
 import { BackupModal } from "./wallets/BackupModal";
 import { DepositModal } from "./wallets/DepositModal";
 import { ExternalWallets } from "./wallets/ExternalWallets";
+import { ImportBackupModal } from "./wallets/ImportBackupModal";
+import { DepositsLedger, WithdrawalsLedger } from "./wallets/LedgerTables";
 import { WithdrawModal } from "./wallets/WithdrawModal";
 
 export function Wallets() {
@@ -28,6 +30,7 @@ export function Wallets() {
   const [backup, setBackup] = useState<Wallet | null>(null);
   const [removeW, setRemoveW] = useState<Wallet | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [importBackupOpen, setImportBackupOpen] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
 
   const create = async (family: "evm" | "solana") => {
@@ -73,6 +76,7 @@ export function Wallets() {
             <button type="button" className="btn btn-sm" onClick={() => create("evm")} disabled={creating !== null}>{creating === "evm" ? "Creating…" : "Create EVM wallet"}</button>
             <button type="button" className="btn btn-sm" onClick={() => create("solana")} disabled={creating !== null}>{creating === "solana" ? "Creating…" : "Create Solana wallet"}</button>
             <button type="button" className="btn btn-sm" onClick={() => setImportOpen(true)}>Import private key</button>
+            <button type="button" className="btn btn-sm" onClick={() => setImportBackupOpen(true)} data-testid="import-backup-open">Import backup</button>
           </div>
         }
         footer="Bot wallets are generated or imported server-side, encrypted at rest and only used for automated DEX legs. Back every wallet up before funding it."
@@ -134,18 +138,14 @@ export function Wallets() {
 
       <ExternalWallets wallets={data.external_wallets} onChanged={refresh} />
 
-      <Card title="Recent detected deposits">
-        {data.deposits.length === 0 ? <EmptyState title="No deposits detected">{data.simulated ? "Deposits are only tracked in testnet/live mode." : "Incoming transfers are detected on the next balance refresh."}</EmptyState> : (
-          <ul className="list-plain">
-            {data.deposits.slice().reverse().map((d, i) => (
-              <li key={i} className="row-between"><span><strong className="mono">{fmtAmount(d.amount)} {d.asset}</strong> on {chainLabel(d.chain)}</span><span className="small muted">{fmtDateTime(d.ts)}</span></li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <div className="grid grid-2">
+        <DepositsLedger rows={data.deposits} simulated={data.simulated} />
+        <WithdrawalsLedger rows={data.withdrawals ?? []} />
+      </div>
 
       <DepositModal open={deposit !== null} onClose={() => setDeposit(null)} defaultChain={deposit ?? undefined} key={deposit ?? "closed"} />
-      <WithdrawModal open={withdraw} onClose={() => setWithdraw(false)} simulated={data.simulated} onDone={refresh} />
+      <WithdrawModal open={withdraw} onClose={() => setWithdraw(false)} simulated={data.simulated} onDone={refresh} tokenRegistry={data.token_registry} allowlist={data.allowlist} newAddressDelayMinutes={data.new_address_delay_minutes} />
+      <ImportBackupModal open={importBackupOpen} onClose={() => setImportBackupOpen(false)} onDone={refresh} />
       <BackupModal wallet={backup} onClose={() => setBackup(null)} onDone={refresh} />
       <ImportWalletModal open={importOpen} onClose={() => setImportOpen(false)} onDone={refresh} />
       <ConfirmDialog

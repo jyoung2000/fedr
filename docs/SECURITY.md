@@ -12,7 +12,7 @@ and sends no telemetry (`FEDR_TELEMETRY_ENABLED=false` is the default and nothin
 | Bot wallet private keys | `wallets.key_enc` | AES-256-GCM with the master key; AAD = wallet id |
 | Master key | `FEDR_MASTER_KEY` env **or** `/data/config/master.key` (mode 0600, generated once) | never logged; fingerprint only |
 | Gateway wallet keystores | `gateway/conf/wallets/**` | Gateway's own scrypt + AES-256-GCM with `GATEWAY_PASSPHRASE` |
-| UI token | `FEDR_AUTH_TOKEN` | compared in constant time; cookie is HttpOnly + SameSite=Strict |
+| UI token | `FEDR_AUTH_TOKEN`, or generated into `/data/config/ui-token` (mode 0600) when unset | compared in constant time; 0.5 s delay per failure; 5 failures / 10 min lock the client address; cookie is HttpOnly + SameSite=Strict |
 
 * Secrets never reach the frontend: the API returns masked permission flags, never keys.
   Wallet backups are exported as **passphrase-encrypted keystores** (EVM: Web3 Secret Storage v3,
@@ -21,6 +21,21 @@ and sends no telemetry (`FEDR_TELEMETRY_ENABLED=false` is the default and nothin
   hex/base58 key-shaped values.
 * The bot wallet key is transmitted exactly once to the **local** Gateway container (same compose
   network, no host port) so Gateway can sign swaps. It is never sent to a third party.
+
+## Authentication is mandatory
+
+Every `/api/*` route except `/api/system/health`, `/api/auth/status` and `/api/auth/login` requires the
+token (Bearer header or the login cookie); `/health/*` are unauthenticated liveness probes that expose no
+data. There is no "no token" mode: when `FEDR_AUTH_TOKEN` is unset a random token is generated once and
+written to `/data/config/ui-token` with mode 0600 (`docker compose exec app cat /data/config/ui-token`).
+
+## Withdrawals
+
+Bot-wallet withdrawals (native and ERC-20 / SPL tokens) require: not PAPER/SIMULATION mode, an explicit
+`confirm`, a destination on the allowlist (new allowlist entries wait `new_address_delay_minutes`, default 60),
+a fresh quote with a known fee, and an idempotency `request_key` (a repeated key returns 409 and sends nothing).
+Every request is written to the `withdrawals` ledger before broadcast. FEDR never calls an exchange `withdraw()`.
+Withdrawal broadcasting has **not** been verified against a live network in this build (see the matrix).
 
 ## Exchange API keys
 
@@ -67,4 +82,7 @@ the readiness checklist fails if withdrawals are enabled; elsewhere the UI asks 
 - [x] No public admin endpoint; `/api/docs` only in DEBUG
 - [x] Database file lives in the `/data` volume with the container user as owner
 - [x] `.gitignore`/`.dockerignore` exclude `.env`, `data/`, `gateway/conf`
-- [x] Dependencies pinned to minimum versions; `pip audit`/`npm audit` recommended before deploy
+- [x] Dependencies pinned to minimum versions; `pip-audit` (0 known vulnerabilities) and `npm audit` (0) run on 2026-09-14
+- [x] Backups exclude the master key and UI token by default; `scripts/backup.py verify` scans for plaintext keys
+- [x] Login lockout (5 failures / 10 min per address) + constant-time compare + delay
+- [x] Profit Guard cannot be bypassed from the API or by a forged opportunity (`docs/PROFIT_GUARD_CALL_GRAPH.md`)

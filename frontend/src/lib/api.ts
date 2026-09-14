@@ -84,3 +84,20 @@ export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
+
+/** Raw JSON GET that never throws on non-2xx: the /health/* probes answer 503 with a JSON body we still want to render. */
+export async function fetchJson<T>(path: string): Promise<{ ok: boolean; status: number; data: T | null }> {
+  try {
+    const res = await fetch(path, { credentials: "include" });
+    const text = await res.text();
+    let data: T | null = null;
+    try {
+      data = text ? (JSON.parse(text) as T) : null;
+    } catch {
+      data = null;
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}

@@ -11,5 +11,5 @@ services:
       FEDR_DEFAULT_MODE: simulation
     volumes:
       - ./backend/fedr:/app/fedr:ro
-      - ./data:/data
+      - fedr-data:/data
     read_only: false

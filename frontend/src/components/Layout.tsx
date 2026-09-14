@@ -5,7 +5,8 @@ import { useAppState } from "../lib/app-state";
 import { fmtTime } from "../lib/format";
 import { Banner } from "./Banner";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { IconDashboard, IconExchange, IconHistory, IconOpportunities, IconSettings, IconStop, IconTrading, IconWallet } from "./Icons";
+import { IconDashboard, IconExchange, IconHealth, IconHistory, IconOpportunities, IconSettings, IconStop, IconTrading, IconWallet } from "./Icons";
+import { StateBar } from "./StateBar";
 import { ModeBadge, StatusPill } from "./StatusPill";
 import { useToast } from "./Toast";
 
@@ -16,11 +17,12 @@ const NAV = [
   { to: "/wallets", label: "Wallets", icon: IconWallet },
   { to: "/exchanges", label: "Exchanges", icon: IconExchange },
   { to: "/history", label: "History", icon: IconHistory },
+  { to: "/status", label: "Health", icon: IconHealth },
   { to: "/settings", label: "Settings", icon: IconSettings },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { status, statusError, refreshStatus, snapshot, sseConnected } = useAppState();
+  const { status, statusError, refreshStatus, refreshMetrics, snapshot, sseConnected, alerts } = useAppState();
   const toast = useToast();
   const [stopOpen, setStopOpen] = useState(false);
   const [reason, setReason] = useState("manual");
@@ -50,7 +52,7 @@ export function Layout({ children }: { children: ReactNode }) {
     try {
       const r = await api.post<{ reset: number }>("/api/system/breakers/reset", {});
       toast.success(`${r.reset} circuit breaker(s) reset`);
-      await refreshStatus();
+      await Promise.all([refreshStatus(), refreshMetrics()]);
     } catch (err) {
       toast.error(`Reset failed: ${(err as Error).message}`);
     } finally {
@@ -59,7 +61,7 @@ export function Layout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`app ${isLive ? "is-live" : ""}`}>
+    <div className={`app ${isLive ? "is-live" : ""} ${estop ? "is-estop" : ""}`}>
       <header className="app-header">
         <Link to="/" className="brand" aria-label="FEDR dashboard">
           <span className="brand-mark" aria-hidden="true">F</span>
@@ -67,45 +69,55 @@ export function Layout({ children }: { children: ReactNode }) {
         </Link>
         <div className="header-badges">
           <ModeBadge mode={mode} />
-          {status?.shadow_mode ? (
-            <StatusPill tone="info" title="Shadow mode: decisions are recorded but nothing is submitted">
-              SHADOW MODE
+          {estop ? (
+            <StatusPill tone="danger" title="Emergency stop is active — release it from the red banner">
+              E-STOP
             </StatusPill>
           ) : null}
-          {status && !status.bot_enabled ? <StatusPill tone="warning">BOT OFF</StatusPill> : null}
           <span className={`health health-${sseConnected ? "success" : "warning"} tiny`} title="Event stream connection (not the trading mode)">
             <span className={`dot dot-${sseConnected ? "success" : "warning"}`} aria-hidden="true" />
             {sseConnected ? "Connected" : "Reconnecting…"}
           </span>
         </div>
         <div className="header-spacer" />
-        <button type="button" className="btn btn-estop" onClick={() => setStopOpen(true)} aria-haspopup="dialog">
+        <button type="button" className="btn btn-estop" onClick={() => setStopOpen(true)} aria-haspopup="dialog" aria-label="Emergency stop">
           <IconStop />
           <span>Emergency stop</span>
         </button>
       </header>
 
+      <StateBar alerts={alerts} />
+
       <div className="banners">
-        {isLive ? (
-          <Banner tone="danger">
-            <strong>LIVE — REAL MONEY.</strong> Orders submitted from now on use real funds.{status?.shadow_mode ? " Shadow mode is on: nothing is submitted until you turn it off in Trading." : ""}
-          </Banner>
-        ) : null}
         {estop ? (
           <Banner
             tone="danger"
+            id="estop-banner"
+            className="banner-estop"
             actions={
               <button type="button" className="btn" onClick={release} disabled={releasing}>
-                {releasing ? "Releasing…" : "Release"}
+                {releasing ? "Releasing…" : "Release emergency stop"}
               </button>
             }
           >
-            <strong>EMERGENCY STOP ACTIVE.</strong> Scanning and execution are halted{status?.emergency_stop_reason ? ` — reason: ${status.emergency_stop_reason}` : ""}. Open orders were cancelled; review positions before releasing.
+            <span className="pulse-dot pulse" aria-hidden="true" />
+            <strong>EMERGENCY STOP ACTIVE.</strong> Scanning and execution are halted{status?.emergency_stop_reason ? ` — reason: ${status.emergency_stop_reason}` : ""}. Open orders were cancelled; review{" "}
+            <Link to="/trading" className="banner-link">
+              positions
+            </Link>{" "}
+            before releasing. It is reset here with the Release button.
+          </Banner>
+        ) : null}
+        {isLive ? (
+          <Banner tone="danger" id="live-banner" className="banner-live">
+            <span className="pulse-dot pulse" aria-hidden="true" />
+            <strong>LIVE — REAL FUNDS.</strong> Orders submitted from now on use real funds.{status?.shadow_mode ? " Shadow mode is on: nothing is submitted until you turn it off in Trading." : ""}
           </Banner>
         ) : null}
         {breakers.length > 0 ? (
           <Banner
             tone="warning"
+            id="breakers-banner"
             actions={
               <button type="button" className="btn" onClick={resetBreakers} disabled={resetting}>
                 {resetting ? "Resetting…" : "Reset after investigation"}

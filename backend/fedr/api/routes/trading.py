@@ -178,3 +178,69 @@ async def inventory_target(body: InventoryTargetBody, app=Depends(require_app)):
         app.mode, body.venue, body.asset.upper(), body.target, body.minimum, body.maximum
     )
     return {"ok": True}
+
+
+@router.get("/trading/positions")
+async def positions(app=Depends(require_app), limit: int = 50):
+    """Open carry positions with live marks plus recent closed positions (this mode)."""
+    pm = app.positions
+    open_rows = await pm.detailed() if pm else []
+    history = (
+        [
+            pm._row(p)
+            for p in await app.repo.list_positions(app.mode, open_only=False, limit=limit)
+            if p.status == "closed"
+        ]
+        if pm
+        else []
+    )
+    pol = pm.policy if pm else None
+    return {
+        "open": open_rows,
+        "history": history,
+        "policy": {
+            "exit_basis_pct": str(pol.exit_basis_pct),
+            "funding_flip_periods": pol.funding_flip_periods,
+            "max_hold_hours": pol.max_hold_hours,
+            "min_liquidation_distance_pct": str(pol.min_liquidation_distance_pct),
+            "max_basis_widening_pct": str(pol.max_basis_widening_pct),
+            "funding_interval_hours": str(pol.funding_interval_hours),
+            "flatten_on_emergency_stop": pol.flatten_on_emergency_stop,
+        }
+        if pol
+        else None,
+        "verification": "paper-verified only; live derivatives venues NOT verified in this build",
+    }
+
+
+class CloseBody(BaseModel):
+    reason: str = "manual close"
+
+
+@router.post("/trading/positions/{position_id}/close")
+async def close_position(position_id: str, body: CloseBody, app=Depends(require_app)):
+    pm = app.positions
+    pos = pm.open.get(position_id) if pm else None
+    if pos is None:
+        raise HTTPException(404, "no open position with that id")
+    if pos.status != "open":
+        raise HTTPException(409, f"position is {pos.status}")
+    tr = await pm.close(pos, body.reason[:80], trigger="user")
+    if tr is None:
+        raise HTTPException(503, "close could not be submitted (venue unavailable); position remains open")
+    await app.repo.audit(
+        app.mode,
+        "execution",
+        f"Manual close requested for position {position_id}: {tr.status.value}",
+        {"position_id": position_id, "trade_id": tr.id},
+    )
+    return {"trade": trade_detail(tr), "position": pm._row(pos)}
+
+
+@router.post("/trading/positions/close-all")
+async def close_all_positions(body: CloseBody, app=Depends(require_app)):
+    pm = app.positions
+    if pm is None:
+        return {"closed": []}
+    trades = await pm.close_all(body.reason[:80], trigger="user")
+    return {"closed": [trade_detail(t) for t in trades]}

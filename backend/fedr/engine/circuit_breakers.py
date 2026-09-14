@@ -55,7 +55,11 @@ class CircuitBreakerManager:
         return any(b.scope == scope for b in self._active.values())
 
     def blocks(
-        self, venue: str | None = None, chain: str | None = None, strategy: str | None = None
+        self,
+        venue: str | None = None,
+        chain: str | None = None,
+        strategy: str | None = None,
+        symbol: str | None = None,
     ) -> list[str]:
         out = []
         for b in self._active.values():
@@ -67,6 +71,8 @@ class CircuitBreakerManager:
                 out.append(f"circuit breaker on chain {chain}: {b.reason.value} ({b.detail})")
             elif strategy and b.scope == f"strategy:{strategy}":
                 out.append(f"circuit breaker on strategy {strategy}: {b.reason.value}")
+            elif symbol and b.scope == f"symbol:{symbol}":
+                out.append(f"circuit breaker on {symbol}: {b.reason.value} ({b.detail})")
         return out
 
     async def trip(

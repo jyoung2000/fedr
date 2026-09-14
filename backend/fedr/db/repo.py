@@ -17,6 +17,7 @@ from fedr.db.models import (
     BacktestRun,
     BalanceSnapshot,
     CircuitBreakerRow,
+    Deposit,
     ExchangeAccount,
     ExecutionError,
     ExperienceStat,
@@ -27,12 +28,14 @@ from fedr.db.models import (
     Order,
     PaperBalance,
     PnlDaily,
+    Position,
     Rebalance,
     RiskEvent,
     SettingsRow,
     ShadowRecord,
     Trade,
     Wallet,
+    Withdrawal,
     utcnow,
 )
 
@@ -622,3 +625,84 @@ class Repo:
                 ExecutionError,
             ):
                 await s.execute(delete(model).where(model.mode == mode.value))
+
+    # ------------------------------------------------------------------ deposits / withdrawals / positions
+    async def record_deposit(self, dep: Deposit) -> bool:
+        """Insert a deposit; returns False when the dedupe key already exists (no double credit)."""
+        async with self.db.session() as s:
+            existing = (
+                await s.execute(select(Deposit.id).where(Deposit.dedupe_key == dep.dedupe_key))
+            ).first()
+            if existing:
+                return False
+            s.add(dep)
+            return True
+
+    async def list_deposits(self, mode: TradingMode, limit: int = 50) -> list[Deposit]:
+        async with self.db.session() as s:
+            return list(
+                (
+                    await s.execute(
+                        select(Deposit)
+                        .where(Deposit.mode == mode.value)
+                        .order_by(desc(Deposit.detected_at))
+                        .limit(limit)
+                    )
+                ).scalars()
+            )
+
+    async def create_withdrawal(self, w: Withdrawal) -> Withdrawal | None:
+        """Insert a withdrawal request; returns None if the same request key was already submitted."""
+        async with self.db.session() as s:
+            existing = (
+                await s.execute(select(Withdrawal).where(Withdrawal.request_key == w.request_key))
+            ).scalar_one_or_none()
+            if existing:
+                return None
+            s.add(w)
+            return w
+
+    async def update_withdrawal(self, wid: str, **fields: Any) -> None:
+        async with self.db.session() as s:
+            await s.execute(update(Withdrawal).where(Withdrawal.id == wid).values(**fields))
+
+    async def list_withdrawals(self, mode: TradingMode, limit: int = 50) -> list[Withdrawal]:
+        async with self.db.session() as s:
+            return list(
+                (
+                    await s.execute(
+                        select(Withdrawal)
+                        .where(Withdrawal.mode == mode.value)
+                        .order_by(desc(Withdrawal.requested_at))
+                        .limit(limit)
+                    )
+                ).scalars()
+            )
+
+    async def recent_withdrawals_to(self, destination: str, minutes: int) -> list[Withdrawal]:
+        cutoff = utcnow() - timedelta(minutes=minutes)
+        async with self.db.session() as s:
+            q = select(Withdrawal).where(
+                Withdrawal.destination == destination,
+                Withdrawal.requested_at >= cutoff,
+                Withdrawal.status.in_(["requested", "broadcast", "confirmed"]),
+            )
+            return list((await s.execute(q)).scalars())
+
+    async def save_position(self, pos: Position) -> None:
+        async with self.db.session() as s:
+            await s.merge(pos)
+
+    async def list_positions(
+        self, mode: TradingMode, open_only: bool = False, limit: int = 100
+    ) -> list[Position]:
+        async with self.db.session() as s:
+            q = select(Position).where(Position.mode == mode.value)
+            if open_only:
+                q = q.where(Position.status.in_(["open", "closing"]))
+            return list((await s.execute(q.order_by(desc(Position.opened_at)).limit(limit))).scalars())
+
+    async def schema_version(self) -> int:
+        from fedr.db.migrations import current_version
+
+        return await current_version(self.db.engine)

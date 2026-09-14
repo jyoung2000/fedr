@@ -1,13 +1,25 @@
 # Connector matrix
 
-Status vocabulary (progressive): **SUPPORTED → CONNECTED → HEALTHY → TRADEABLE → ARBITRAGE-ELIGIBLE**.
-Verification levels: `supported_not_verified_live`, `testnet_verified`, `live_verified`.
+## Status language (mandatory)
 
-> **Honesty note.** This release was built in an environment with **no network access to any exchange,
-> DEX or RPC endpoint** (egress blocked). Therefore every connector is `SUPPORTED — NOT VERIFIED LIVE`.
-> The code paths were exercised against ccxt's offline market/capability metadata, the Gateway 2.16
-> route contract (read from source), synthetic venues, and unit tests. Run the matrix below on your
-> deployment (paper → testnet → shadow) before trusting a venue.
+Every connector carries exactly one of these statuses. "supported" alone is never used.
+
+| Status | Meaning |
+|---|---|
+| **SUPPORTED + TESTED** | code path exists and is exercised by the offline test suite (ccxt market/capability metadata, synthetic venues, unit tests); *not* exercised against the venue's API |
+| **SUPPORTED + SANDBOX VERIFIED** | market data, balances and an order create/cancel round-trip were run against the venue's sandbox/testnet (`tests/integration/test_external_environment.py::test_cex_sandbox_balance_and_order_round_trip`) |
+| **SUPPORTED + LIVE VERIFIED** | same round-trip on a production account with a tiny size, plus a reconciled paper→live comparison |
+| **UNVERIFIED** | code exists but no test exercises it |
+| **BLOCKED** | verification impossible in the environment that produced this document (no egress / no keys) |
+
+Progressive runtime state (shown in the UI) is separate: SUPPORTED → CONNECTED → HEALTHY → TRADEABLE →
+ARBITRAGE-ELIGIBLE.
+
+> **State of this build (2026-09-14).** The verification environment had **no egress to any exchange,
+> DEX aggregator, Gateway or RPC endpoint**. Therefore every connector below is
+> **SUPPORTED + TESTED (offline)** and **BLOCKED** for sandbox/live verification *here*. Nothing in this
+> table is SANDBOX VERIFIED or LIVE VERIFIED. Run the integration tests with the documented environment
+> variables on your deployment and update the "Result" column from the test output - never by hand.
 
 ## CEX (via ccxt 4.5.78)
 
@@ -32,15 +44,16 @@ Per-connector test matrix (fill in on your deployment; `docs/CONNECTORS.md` is t
 
 | Check | How | Result (this build) |
 |---|---|---|
-| market data | `fetch_order_book` via paper mode | not verified live (offline) |
-| order book WS | ccxt.pro `watch_order_book` with REST fallback | not verified live |
-| balance | `fetch_balance` on account add | not verified live |
-| order create/cancel/fills | IOC limit round-trip in TESTNET | not verified live |
-| fees | `fetch_trading_fees` → market metadata → documented fallback | code path unit-tested |
-| precision / min sizes | `amount_step`, `min_amount`, `min_cost` from `load_markets` | unit-tested with ccxt metadata |
-| rate limits | ccxt throttler + `RateLimitExceeded` → DEGRADED | code path |
-| errors | ccxt error hierarchy → ConnectorError classes | unit-tested |
-| sandbox | `set_sandbox_mode` gated by registry `sandbox` flag | code path |
+| market data | `fetch_order_book` via paper mode; quality gate `fedr/marketdata/quality.py` | SUPPORTED + TESTED (offline, synthetic + ccxt metadata); live: BLOCKED (no egress) - enable with `FEDR_IT_NETWORK=1` |
+| order book WS | ccxt.pro `watch_order_book` with REST fallback; `WEBSOCKET_FAILURE` breaker on loss | SUPPORTED + TESTED (fallback logic); live: BLOCKED |
+| balance | `fetch_balance` on account add and every balance loop | UNVERIFIED against a venue; BLOCKED here (`FEDR_IT_CCXT_*`) |
+| order create/cancel/fills | IOC limit round-trip in TESTNET | UNVERIFIED against a venue; BLOCKED here (sandbox keys) |
+| fees | `fetch_trading_fees` → market metadata → documented fallback (unknown fee = BLOCKED route) | SUPPORTED + TESTED |
+| precision / min sizes | `amount_step`, `min_amount`, `min_cost` from `load_markets` | SUPPORTED + TESTED (ccxt metadata) |
+| rate limits | ccxt throttler + `RateLimitExceeded` → DEGRADED | SUPPORTED + TESTED (error mapping); behaviour under real limits UNVERIFIED |
+| errors | ccxt error hierarchy → ConnectorError classes | SUPPORTED + TESTED |
+| sandbox | `set_sandbox_mode` gated by registry `sandbox` flag | UNVERIFIED (BLOCKED here) |
+| clock drift | `fetch_time` vs local clock every 5 min → DEGRADED ≥1 s, UNHEALTHY ≥10 s | SUPPORTED + TESTED (`tests/test_clock.py`) |
 
 ## DEX (via Hummingbot Gateway 2.16.0)
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Snapshot } from "./types";
 
 type Handler = (data: unknown) => void;
-const KINDS = ["snapshot", "trade", "breakers", "deposit", "estop", "settings"] as const;
+const KINDS = ["snapshot", "trade", "breakers", "deposit", "estop", "settings", "position"] as const;
 
 class SseClient {
   private es: EventSource | null = null;

@@ -36,7 +36,7 @@ export function LiveCard({ live, env, mode, onSaved }: { live: AppSettings["live
 
   const ready = Boolean(data?.ready) && env.live_trading_allowed;
   return (
-    <Card id="live" title="Live trading" tone={isLive ? "danger" : "default"} actions={isLive ? <StatusPill tone="danger" size="lg">LIVE — REAL MONEY</StatusPill> : <StatusPill tone={ready ? "success" : "muted"}>{ready ? "READY TO ACTIVATE" : "NOT READY"}</StatusPill>}>
+    <Card id="live" title="Live trading" tone={isLive ? "danger" : "default"} actions={isLive ? <StatusPill tone="danger" size="lg">LIVE — REAL FUNDS</StatusPill> : <StatusPill tone={ready ? "success" : "muted"}>{ready ? "READY TO ACTIVATE" : "NOT READY"}</StatusPill>}>
       <div className="stack">
         <p className="small">
           LIVE mode submits real orders with real funds. Activation requires every readiness item below, the environment gate <code>FEDR_LIVE_TRADING_ALLOWED=true</code>, and typing the confirmation phrase. Live starts in shadow mode with auto-execute off.

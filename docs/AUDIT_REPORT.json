@@ -1,0 +1,688 @@
+{
+  "generated": "2026-09-14",
+  "version": "0.2.0-rc1",
+  "git": "b456837",
+  "production_ready": false,
+  "production_ready_reason": "critical capabilities are not IMPLEMENTED + VERIFIED in this environment: RT-02, RT-03, RT-04, RT-05, RT-06, RT-07, MD-03, CX-01, CX-02, CX-03, CX-04, WL-03, WL-04, MO-02, MO-04, MO-06, ST-02, ST-05",
+  "classification_vocabulary": [
+    "IMPLEMENTED + VERIFIED",
+    "IMPLEMENTED + PARTIALLY VERIFIED",
+    "IMPLEMENTED + UNVERIFIED",
+    "PARTIALLY IMPLEMENTED",
+    "NOT IMPLEMENTED",
+    "UNSAFE",
+    "MUST BLOCK",
+    "BLOCKED BY EXTERNAL DEPENDENCY"
+  ],
+  "counts": {
+    "IMPLEMENTED + VERIFIED": 43,
+    "BLOCKED BY EXTERNAL DEPENDENCY": 8,
+    "IMPLEMENTED + PARTIALLY VERIFIED": 16,
+    "IMPLEMENTED + UNVERIFIED": 2,
+    "MUST BLOCK": 1
+  },
+  "environment": {
+    "exchange_egress": false,
+    "rpc_egress": false,
+    "docker_registry": false,
+    "docker_daemon": "local overlay2 daemon started in the sandbox (no iptables, no bridge); base images imported from the host rootfs",
+    "gateway_image": false,
+    "foundry_slither": false
+  },
+  "breaker_reasons": {
+    "total": 19,
+    "wired_and_tested": [
+      "UNEXPECTED_FEES",
+      "ABNORMAL_SLIPPAGE",
+      "REPEATED_ORDER_FAILURE",
+      "DEX_TX_FAILURE",
+      "RPC_FAILURE",
+      "WEBSOCKET_FAILURE",
+      "MARKET_DATA_FAILURE",
+      "FLASH_LOAN_FAILURE",
+      "BALANCE_DISCREPANCY",
+      "POSITION_DISCREPANCY",
+      "PREDICTION_ERROR",
+      "RAPID_MARKET_MOVE",
+      "GAS_SPIKE",
+      "FUNDING_ANOMALY",
+      "EXCHANGE_MAINTENANCE",
+      "RATE_LIMIT",
+      "ONE_LEG_FILL",
+      "DAILY_LOSS_LIMIT",
+      "MANUAL"
+    ]
+  },
+  "rows": [
+    {
+      "id": "RT-01",
+      "area": "runtime",
+      "capability": "Application port fixed at 8935; startup configuration validation",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "backend/fedr/config/env.py::validate_startup; tests/test_api.py::test_startup_refuses_live_gate_without_auth_token, ::test_startup_refuses_live_boot_default; tests/integration/test_process_lifecycle.py (real process boot)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-02",
+      "area": "runtime",
+      "capability": "Docker image build from docker/Dockerfile with the official base images (python:3.11-slim-bookworm, node:22-bookworm-slim)",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "Registry access is denied in this environment (docker pull \u2192 'download failed: Forbidden'). The Dockerfile was parameterised (ARG BASE_IMAGE / NODE_IMAGE / APT_PACKAGES / PY_SITE) and built unmodified against a locally imported Debian rootfs: see RT-03.",
+      "limitation": "Run `docker compose build` on a host with registry access and record the result in docs/PRODUCTION_VERIFICATION_REPORT.md.",
+      "critical": true
+    },
+    {
+      "id": "RT-03",
+      "area": "runtime",
+      "capability": "Image build + container runtime with substituted (locally imported) base images: pip install, npm ci, vite build, non-root user, healthcheck",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "docker/Dockerfile built with --build-arg BASE_IMAGE=fedr/base-local:sandbox (a trimmed copy of this machine's Debian rootfs). See docs/DOCKER_SECURITY_REPORT.md for the exact commands and outputs.",
+      "limitation": "Substitute base images are not the images users get; treat as a topology/runtime test, not a build reproducibility test.",
+      "critical": true
+    },
+    {
+      "id": "RT-04",
+      "area": "runtime",
+      "capability": "Compose stack up, /health, restart, down/up persistence, gateway not published",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "docs/DOCKER_SECURITY_REPORT.md (runtime section). The gateway service could not run (RT-05); the app service was exercised with `docker compose up -d --no-deps app` plus a stand-in container on the internal network to prove non-exposure.",
+      "limitation": "Repeat with the real Gateway image on a host with registry access.",
+      "critical": true
+    },
+    {
+      "id": "RT-05",
+      "area": "runtime",
+      "capability": "Hummingbot Gateway container (DEX middleware) runs and answers on the internal network",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "Image pull denied; source build fails at pnpm install (JSR registry blocked). The app boots and reports DEX venues unavailable without it: tests/integration (FEDR_GATEWAY_ENABLED=false), fedr/app.py start() gateway ping.",
+      "limitation": "Start `hummingbot/gateway:version-2.16.0` on a host with registry access; run tests/integration with FEDR_IT_GATEWAY_URL.",
+      "critical": true
+    },
+    {
+      "id": "RT-06",
+      "area": "runtime",
+      "capability": "Gateway is never published on a host port; app publishes 127.0.0.1:8935 only",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "`docker compose config` shows no `ports:` on the gateway service and `127.0.0.1:8935:8935` on app; runtime check with a stand-in gateway container in docs/DOCKER_SECURITY_REPORT.md.",
+      "limitation": "Runtime check used a stand-in container, not the Gateway image.",
+      "critical": true
+    },
+    {
+      "id": "RT-07",
+      "area": "runtime",
+      "capability": "Container hardening: non-root uid 10001, cap_drop ALL, no-new-privileges, read-only root FS, tmpfs /tmp, /data volume",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "Static: docker-compose.yml, docker/Dockerfile. Runtime: docs/DOCKER_SECURITY_REPORT.md (id, capabilities, read-only test inside the running container).",
+      "limitation": "Verified in the sandbox daemon (overlay2, no iptables); re-run on the target host.",
+      "critical": true
+    },
+    {
+      "id": "RT-08",
+      "area": "runtime",
+      "capability": "Clean-checkout build (no dependency on untracked files)",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": ".dockerignore excludes data/, node_modules/, dist/, .env*, backend/fedr/static; the image builds the UI itself. scripts/secret_scan.py confirms no .env / keystores are tracked.",
+      "limitation": "A `git clone` into an empty directory followed by `docker compose build` was not executed here (registry blocked).",
+      "critical": false
+    },
+    {
+      "id": "RT-09",
+      "area": "runtime",
+      "capability": "Environment profiles: .env.dev/.paper/.testnet/.live examples with safe defaults; compose overlays per mode",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": ".env.*.example; docker-compose.{dev,paper,testnet,live}.yml; `docker compose config -q` for each overlay in scripts/verify_production.py output.",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "RT-10",
+      "area": "runtime",
+      "capability": "Startup fails safely on unsafe/missing critical configuration (live boot default, live-allowed without token, bad master key, unwritable data dir)",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/config/env.py::validate_startup; tests/test_api.py startup tests; process exits non-zero with the reason.",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-11",
+      "area": "runtime",
+      "capability": "Mandatory authentication for every sensitive route; generated token file 0600; CSRF header + same-host Origin on cookie sessions; login lockout",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/api/auth.py; tests/test_api.py::test_auth_is_always_required_and_csrf_guard, ::test_login_lockout_after_repeated_failures; tests/integration/test_process_lifecycle.py::test_api_requires_token_and_csrf_header, ::test_generated_ui_token_file_is_private_when_no_token_configured",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-12",
+      "area": "runtime",
+      "capability": "Observability: /health, /health/live, /health/ready (per-check booleans, 503 when not ready), /api/system/metrics",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/main.py; tests/test_api.py::test_health_endpoints_are_public_and_readiness_reflects_state; tests/integration/test_process_lifecycle.py::test_live_ready_and_public_health",
+      "limitation": "No Prometheus exposition format (JSON only).",
+      "critical": false
+    },
+    {
+      "id": "RT-13",
+      "area": "runtime",
+      "capability": "Audit log of every state change / sensitive action",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "repo.audit calls throughout fedr/app.py and routes; tests/integration/test_process_lifecycle.py::test_database_schema_and_audit_trail",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-14",
+      "area": "runtime",
+      "capability": "Database: versioned migrations (schema_version, v1\u2192v2 idempotent), WAL mode, persistence across restart",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/db/migrations.py; tests/test_wallets_and_migrations.py (v1\u2192v2 idempotent); integration: WAL + schema_version=2 + restart persistence",
+      "limitation": "Corruption recovery = restore from backup (RT-15); there is no automatic repair.",
+      "critical": true
+    },
+    {
+      "id": "RT-15",
+      "area": "runtime",
+      "capability": "Backup / restore / verify tooling; secrets excluded by default; plaintext-key scan",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "scripts/backup.py; tests/test_backup_script.py (create\u2192verify\u2192restore into a fresh dir, tamper detection, plaintext key detection, --include-secrets manifest)",
+      "limitation": "Restore into a fresh *container* was exercised only via the process-level wallet restore test (WL-02), not a compose volume swap.",
+      "critical": true
+    },
+    {
+      "id": "RT-16",
+      "area": "runtime",
+      "capability": "Idempotency: withdrawal request_key (409 on repeat), deposit dedupe_key, one execution per scan tick",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_wallets_and_migrations.py (ledger idempotency, deposit dedupe); fedr/api/routes/wallets.py; fedr/app.py::_scan_loop (single execution per tick)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-17",
+      "area": "runtime",
+      "capability": "UTC everywhere; clock drift vs venue server time measured every 5 min \u2192 DEGRADED \u22651 s / UNHEALTHY \u226510 s",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/core/clock.py; tests/test_clock.py; fedr/app.py::_health_check_all",
+      "limitation": "Drift against a real exchange not measured here (no egress).",
+      "critical": false
+    },
+    {
+      "id": "RT-18",
+      "area": "runtime",
+      "capability": "Rate limiting: login lockout; Gateway client token bucket + backoff (GET only, POST never retried); ccxt built-in throttler; RATE_LIMIT breaker",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "tests/test_api.py::test_login_lockout_after_repeated_failures; tests/test_gateway_client_resilience.py; tests/test_breakers_all_reasons.py (RATE_LIMIT)",
+      "limitation": "Behaviour under real exchange rate limits unverified (no egress). No per-IP limiter on the general API (single-operator tool behind loopback).",
+      "critical": false
+    },
+    {
+      "id": "RT-19",
+      "area": "runtime",
+      "capability": "Secrets never reach logs, the frontend, or browser storage",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/security/redaction.py + tests/test_security.py; API never returns key material (wallet backups are ciphertext); UI keeps passphrases in component state only (frontend/src/pages/wallets/*).",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-20",
+      "area": "runtime",
+      "capability": "No committed secrets (.env, keys, keystores, test API keys)",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "scripts/secret_scan.py over `git ls-files` \u2192 OK; .gitignore covers .env, data/, gateway/conf, keystores.",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "RT-21",
+      "area": "runtime",
+      "capability": "Dependency vulnerability scans",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "pip-audit: 0 known vulnerabilities; npm audit (frontend): 0 vulnerabilities after upgrading vite 8.3.0 / @vitejs/plugin-react 6.1.1 / react-router-dom 7.18.3 (2026-09-14).",
+      "limitation": "Re-run before every release (`scripts/verify_production.py`).",
+      "critical": true
+    },
+    {
+      "id": "RT-22",
+      "area": "runtime",
+      "capability": "Third-party license inventory",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "docs/DEPENDENCY_LICENSES.md",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "MD-01",
+      "area": "market data",
+      "capability": "Market-data quality gate: future/stale timestamps, sequence regressions, duplicates, out-of-order, non-positive prices, crossed books, abnormal spread, cross-source deviation",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/marketdata/quality.py; tests/test_market_data_quality.py",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "MD-02",
+      "area": "market data",
+      "capability": "MARKET DATA UNHEALTHY stops the strategy for that venue (venue-scoped MARKET_DATA_FAILURE breaker + UNHEALTHY health) and recovers when the feed is clean",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/app.py::_on_market_data_reject/_health_check_all; tests/test_api.py::test_market_data_rejections_trip_venue_breaker_and_recover",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "MD-03",
+      "area": "market data",
+      "capability": "Live CEX order books via ccxt REST",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "No exchange egress here. tests/integration/test_external_environment.py::test_public_market_data_passes_quality_gate runs the real check with FEDR_IT_NETWORK=1.",
+      "limitation": "Run on the target host.",
+      "critical": true
+    },
+    {
+      "id": "MD-04",
+      "area": "market data",
+      "capability": "WebSocket feeds (ccxt.pro) with REST fallback and WEBSOCKET_FAILURE breaker",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "Fallback + breaker logic: tests/test_breakers_all_reasons.py; hub stats expose ws state.",
+      "limitation": "Never connected to a real WebSocket here.",
+      "critical": false
+    },
+    {
+      "id": "MD-05",
+      "area": "market data",
+      "capability": "Rapid market move detection (\u22653 % within 10 s) \u2192 symbol-scoped RAPID_MARKET_MOVE breaker",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/marketdata/hub.py::_check_rapid_move; tests/test_breakers_all_reasons.py::test_gas_spike_market_data_failure_rapid_move_and_scopes",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "CX-01",
+      "area": "connectors",
+      "capability": "22 CEX connectors via ccxt (market data, balances, orders, fees, precision, error mapping, sandbox flag)",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "Status per docs/CONNECTORS.md: SUPPORTED + TESTED (offline: ccxt metadata + tests/test_connectors_offline.py). None is SANDBOX VERIFIED or LIVE VERIFIED.",
+      "limitation": "BLOCKED here for any venue-facing check (no egress, no keys).",
+      "critical": true
+    },
+    {
+      "id": "CX-02",
+      "area": "connectors",
+      "capability": "CEX order create / cancel / fills round-trip",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "tests/integration/test_external_environment.py::test_cex_sandbox_balance_and_order_round_trip (needs sandbox keys; refuses to run against a live account).",
+      "limitation": "Run with FEDR_IT_CCXT_* + FEDR_IT_CCXT_SANDBOX=1.",
+      "critical": true
+    },
+    {
+      "id": "CX-03",
+      "area": "connectors",
+      "capability": "DEX venues via Hummingbot Gateway 2.16 (quotes, quoteId execution, wallets, pools)",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "Client verified offline: tests/test_connectors_offline.py, tests/test_gateway_client_resilience.py (throttle/backoff). Gateway itself cannot run here (RT-05).",
+      "limitation": "Run tests/integration with FEDR_IT_GATEWAY_URL.",
+      "critical": true
+    },
+    {
+      "id": "CX-04",
+      "area": "connectors",
+      "capability": "Chains / RPC: gas oracle, deposits, withdrawals, flash-loan broadcast",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "Gas oracle + RPC_FAILURE breaker tested with synthetic data; nothing reached a real RPC here.",
+      "limitation": "Run with FEDR_RPC_* on the target host; testnet first.",
+      "critical": true
+    },
+    {
+      "id": "WL-01",
+      "area": "wallets",
+      "capability": "Isolated bot wallets (EVM + Solana), keys encrypted at rest (AES-256-GCM, AAD = wallet id)",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/wallets/manager.py; tests/test_security.py; tests/test_api.py::test_wallets_create_backup_deposit",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "WL-02",
+      "area": "wallets",
+      "capability": "Encrypted backup export (EVM v3 / Solana scrypt+AES-GCM) \u2192 import \u2192 restore into a fresh installation with address verification",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/wallets/keystore.py; POST /api/wallets/bot/import; tests/test_wallets_and_migrations.py (export/restore, tamper + wrong passphrase fail closed); tests/integration/test_wallet_process.py::test_backup_restores_into_fresh_installation (second process, fresh data dir)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "WL-03",
+      "area": "wallets",
+      "capability": "Deposit detection with deduplication and a persisted deposit ledger",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "fedr/wallets/transfers.py::DepositMonitor; tests/test_wallets_and_migrations.py (dedupe); ledger table + /api/wallets listing.",
+      "limitation": "Never observed a real on-chain deposit (BLOCKED here).",
+      "critical": true
+    },
+    {
+      "id": "WL-04",
+      "area": "wallets",
+      "capability": "Withdrawals: native + ERC-20 + SPL transfer construction, destination validation, allowlist with new-address delay, explicit confirm, idempotent request_key, withdrawal ledger, never in paper/simulation",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "fedr/wallets/transfers.py::WithdrawalService; tests/test_wallets_and_migrations.py (tx construction incl. ERC-20 selector, quote refusals); tests/integration/test_wallet_process.py (mode gate); API allowlist/delay/409 paths.",
+      "limitation": "Broadcasting on a real network (EVM or Solana) has NOT been verified; token withdrawals are therefore not claimed as working end-to-end.",
+      "critical": true
+    },
+    {
+      "id": "WL-05",
+      "area": "wallets",
+      "capability": "Wallet accounting: inventory lines, reservations, gas reserves, collateral buckets, paper ledger conservation",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_ledger_inventory_experience.py; tests/test_positions.py (ledger conservation on a full round trip)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "WL-06",
+      "area": "wallets",
+      "capability": "External wallets (MetaMask / Phantom) for funding only",
+      "status": "IMPLEMENTED + UNVERIFIED",
+      "evidence": "Code path present (fedr/api/routes/wallets.py external wallets); no browser-wallet automation in QA.",
+      "limitation": "Manual test with a real browser extension required.",
+      "critical": false
+    },
+    {
+      "id": "MO-01",
+      "area": "modes",
+      "capability": "SIMULATION end-to-end as a real process: opportunities \u2192 paper execution \u2192 reconciled trades \u2192 P&L, restart persistence",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/integration/test_process_lifecycle.py, test_paper_shadow_execution.py",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "MO-02",
+      "area": "modes",
+      "capability": "PAPER with real public market data",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "Paper executor fully exercised offline (tests/test_execution.py, tests/test_adversarial_matrix.py); the real-data half needs egress.",
+      "limitation": "Run the stack on the target host in PAPER and compare against docs/PRODUCTION_VERIFICATION_REPORT.md.",
+      "critical": true
+    },
+    {
+      "id": "MO-03",
+      "area": "modes",
+      "capability": "SHADOW: evaluates and records, never submits",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_execution.py::test_shadow_mode_records_but_never_submits; tests/integration/test_paper_shadow_execution.py::test_shadow_mode_records_but_submits_nothing",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "MO-04",
+      "area": "modes",
+      "capability": "TESTNET (exchange sandboxes, Sepolia, Solana devnet)",
+      "status": "BLOCKED BY EXTERNAL DEPENDENCY",
+      "evidence": "tests/integration/test_external_environment.py::test_testnet_rpc_and_funded_wallet is gated on FEDR_IT_TESTNET=1.",
+      "limitation": "Run on the target host with test funds.",
+      "critical": true
+    },
+    {
+      "id": "MO-05",
+      "area": "modes",
+      "capability": "LIVE gate: env flag alone cannot enable live; readiness checklist + typed phrase; starts in shadow with auto-execute off; boot never defaults to live",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_api.py::test_settings_patch_profiles_and_live_guard, startup tests; tests/test_profit_guard_bypass.py::test_api_cannot_execute_forged_ids_or_activate_live_from_env_alone; fedr/engine/readiness.py",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "MO-06",
+      "area": "modes",
+      "capability": "LIVE trading with real funds",
+      "status": "MUST BLOCK",
+      "evidence": "Never executed anywhere. Prerequisites still outstanding: CX-02, CX-03, CX-04, MD-03, MO-02, MO-04, ST-05 (contract audit).",
+      "limitation": "Stays blocked until the operator completes sandbox \u2192 testnet \u2192 paper \u2192 shadow verification on their deployment.",
+      "critical": true
+    },
+    {
+      "id": "ST-01",
+      "area": "strategies",
+      "capability": "CEX\u2194CEX paired execution (IOC, partial fills, one-leg recovery, hedge)",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_execution.py; tests/test_adversarial_matrix.py",
+      "limitation": "Real venues: BLOCKED.",
+      "critical": true
+    },
+    {
+      "id": "ST-02",
+      "area": "strategies",
+      "capability": "CEX\u2194DEX (Gateway quoteId flow, gas-aware)",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "Paper path with a synthetic DEX: tests/test_execution.py (quote expiry, venue unavailable, gas spike), tests/test_adversarial_matrix.py.",
+      "limitation": "Real Gateway execution BLOCKED (RT-05).",
+      "critical": true
+    },
+    {
+      "id": "ST-03",
+      "area": "strategies",
+      "capability": "DEX\u2194DEX",
+      "status": "IMPLEMENTED + UNVERIFIED",
+      "evidence": "Strategy catalog + evaluation code exist; no test exercises a two-DEX route.",
+      "limitation": "Add a synthetic two-DEX harness or verify on testnet.",
+      "critical": false
+    },
+    {
+      "id": "ST-04",
+      "area": "strategies",
+      "capability": "Carry (spot\u2194perp, funding, basis): entry through the paired executor, position tracking, funding accrual, exit rules (convergence, funding flip, max hold, liquidation distance, basis widening), forced/manual close, incomplete-close breaker, restart reload, reconciliation vs venue positions, funding-anomaly guard",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/engine/positions.py; tests/test_positions.py (9 tests incl. ledger conservation); tests/test_breakers_all_reasons.py (FUNDING_ANOMALY); API /api/trading/positions.",
+      "limitation": "Paper-verified only. A live derivatives venue (margin mode, funding settlement, liquidation mechanics) has NOT been verified \u2192 not production-ready for real perps.",
+      "critical": true
+    },
+    {
+      "id": "ST-05",
+      "area": "strategies",
+      "capability": "Flash-loan contract: compiles (solc 0.8.28, OpenZeppelin 5.4.0), EVM tests (profit, min-profit revert, cannot-repay, min-out, deadline, non-owner, unlisted router/token, callback-only-pool + foreign initiator, pause, reentrancy, rescue, 2-step ownership, gas)",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "contracts/compile.js; tests/test_contract_evm.py (12 tests on eth-tester with real bytecode); engine aborts before broadcast unless the local EVM simulation and Profit Guard pass (tests/test_execution.py).",
+      "limitation": "NOT audited; slither (static analysis) and foundry fork tests could not be run (binaries unreachable). Mainnet use is MUST BLOCK until an audit + fork tests exist.",
+      "critical": true
+    },
+    {
+      "id": "ST-06",
+      "area": "strategies",
+      "capability": "Rebalancing: cost comparison per method (transfer / bridge / swap); recommendations only, bridging never automated, no automatic capital moves",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/engine/rebalancer.py; tests/test_positions.py::test_rebalancer_compares_methods_and_never_automates_bridging",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-01",
+      "area": "guards",
+      "capability": "Profit Guard: gross / expected / worst-case with full cost attribution and no double counting; unknown fee blocks",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/engine/profit_guard.py; tests/test_profit_guard.py (23 tests incl. acceptance scenarios)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-02",
+      "area": "guards",
+      "capability": "Profit Guard cannot be bypassed: every order path re-evaluates on fresh quotes; forged opportunities rejected; single-leg submission unreachable from the API",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "docs/PROFIT_GUARD_CALL_GRAPH.md; tests/test_profit_guard_bypass.py (6 tests)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-03",
+      "area": "guards",
+      "capability": "Gas Guard regimes (normal/elevated/extreme) raise required profit or block on-chain routes",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_profit_guard.py gas tests; tests/test_execution.py::test_gas_spike_blocks_on_chain_route_but_not_cex_route",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-04",
+      "area": "guards",
+      "capability": "Risk Engine: capital usage, per-trade/asset/venue exposure, concurrent trades, daily loss",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_guards_and_risk.py; tests/test_execution.py::test_max_concurrent_trades_respected",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-05",
+      "area": "guards",
+      "capability": "Circuit breakers: all 19 reasons wired to a real trigger and tested end-to-end; scopes (global / venue / chain / strategy / symbol) block the opportunity engine; persistence + explicit reset",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_breakers_all_reasons.py (incl. test_every_reason_is_wired_to_a_trigger); tests/test_execution.py; tests/test_api.py::test_emergency_stop_and_breakers",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-06",
+      "area": "guards",
+      "capability": "Emergency stop: blocks execution, cancels cancellable orders, persists across restart, explicit release",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_execution.py::test_emergency_stop_blocks_execution_and_persists; tests/integration/test_process_lifecycle.py::test_emergency_stop_persists_across_restart",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-07",
+      "area": "guards",
+      "capability": "Emergency hedge on one-leg / partial fills",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_execution.py::test_one_leg_fill_enters_recovery_and_hedges, ::test_partial_fill_is_hedged_and_recorded",
+      "limitation": "Real venues: BLOCKED.",
+      "critical": true
+    },
+    {
+      "id": "GD-08",
+      "area": "guards",
+      "capability": "Reconciliation: balances vs expected (BALANCE_DISCREPANCY), perp positions vs tracked (POSITION_DISCREPANCY)",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_execution.py::test_reconciliation_pauses_on_discrepancy; tests/test_positions.py::test_positions_survive_restart_and_reconcile_mismatch",
+      "limitation": "Against real venue balances: BLOCKED.",
+      "critical": true
+    },
+    {
+      "id": "GD-09",
+      "area": "guards",
+      "capability": "Experience engine: learning can only raise buffers (bounded), never lowers a requirement",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_profit_guard.py::test_experience_extra_buffer_reduces_expected; tests/test_ledger_inventory_experience.py",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "GD-10",
+      "area": "guards",
+      "capability": "Adversarial P&L matrix: fee spike, adverse drift, thin depth, venue rejections, partial fills, gas spike \u00d7 CEX-CEX / CEX-DEX; carry funding flip",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_adversarial_matrix.py (16 cases): every case is blocked pre-trade or ends with bounded loss / no naked exposure",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-11",
+      "area": "guards",
+      "capability": "P&L accounting: actual vs expected attribution, prediction error, ledger conservation",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "fedr/engine/accounting.py; tests/test_execution.py (value delta == realized net); tests/test_positions.py",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "GD-12",
+      "area": "guards",
+      "capability": "Backtesting / replay clearly labelled as simulation",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_api.py::test_backtest_runs_and_is_labelled",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "UI-01",
+      "area": "ui",
+      "capability": "Health/status page (/status): readiness checklist, liveness, metrics, venue health, breakers, gas",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "frontend/src/pages/Health.tsx; qa/ui_qa.py --mock; docs/UI_QA_REPORT.md",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "UI-02",
+      "area": "ui",
+      "capability": "Positions panel: open carry positions with marks, Close / Close all with confirmation, closed history, verification note",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "frontend/src/pages/trading/PositionsSection.tsx; mocked QA covers rendering + keyboard + confirm; the close POST against the backend is covered by tests/test_positions.py only at API level.",
+      "limitation": "Close flow through a real browser against the backend not exercised.",
+      "critical": false
+    },
+    {
+      "id": "UI-03",
+      "area": "ui",
+      "capability": "Wallets: keystore import, token-aware withdrawal form (registry, fee asset, delay, request_key, 409 handling), deposit/withdrawal ledgers",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "frontend/src/pages/wallets/*; mocked QA. Backend endpoints verified separately (WL-02/WL-04).",
+      "limitation": "Real withdrawal 2xx path never exercised (no network).",
+      "critical": false
+    },
+    {
+      "id": "UI-04",
+      "area": "ui",
+      "capability": "Danger states unmistakable: PAPER / SIMULATION / TESTNET / SHADOW / LIVE (red, pulsing, 'LIVE \u2014 REAL FUNDS') / EMERGENCY STOP / FLASH LOANS ON / HIGH GAS / CONNECTOR DEGRADED / WALLET MISMATCH \u2013 text never colour-only",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "frontend/src/lib/alerts.ts, components/StateBar.tsx, Layout.tsx; qa/ui_qa.py --mock (11 state scenarios \u00d7 4 widths); docs/UI_QA_REPORT.md",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "UI-05",
+      "area": "ui",
+      "capability": "Responsive at 1280 / 1024 / 768 / 400 px with no horizontal page scroll",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "qa/ui_qa.py --mock overflow assertions on every page and state; docs/UI_QA_REPORT.md",
+      "limitation": "",
+      "critical": false
+    },
+    {
+      "id": "UI-06",
+      "area": "ui",
+      "capability": "Keyboard / accessibility basics: tab order, visible focus, labelled inputs, Escape closes dialogs",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "qa/ui_qa.py --mock keyboard pass (Close button reached, Enter/Escape); labels asserted.",
+      "limitation": "No screen-reader or contrast-ratio tooling run.",
+      "critical": false
+    },
+    {
+      "id": "UI-07",
+      "area": "ui",
+      "capability": "Frontend security: CSP default-src 'self', X-Frame-Options DENY, no key material in the bundle or browser storage",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "tests/test_api.py::test_health_status_and_security_headers; code review of frontend/src (passphrases cleared after submit; no localStorage of secrets)",
+      "limitation": "",
+      "critical": true
+    },
+    {
+      "id": "UI-08",
+      "area": "ui",
+      "capability": "UI QA against a running backend (not mocks)",
+      "status": "IMPLEMENTED + PARTIALLY VERIFIED",
+      "evidence": "Phase-1 QA ran against a live simulation backend (docs/RELEASE_REPORT.md); the phase-2 danger-state suite ran in mock mode only.",
+      "limitation": "Re-run `python qa/ui_qa.py http://127.0.0.1:8935` on the target host after login support is added to the script.",
+      "critical": false
+    },
+    {
+      "id": "DOC-01",
+      "area": "docs",
+      "capability": "Documentation set: README, ARCHITECTURE, OPERATIONS, SECURITY, CONNECTORS (mandatory status language), MEV, DEPENDENCY_LICENSES, PROFIT_GUARD_CALL_GRAPH, DOCKER_SECURITY_REPORT, UI_QA_REPORT, PRODUCTION_VERIFICATION_MATRIX, FINAL_PRODUCTION_REPORT, STATUS.json",
+      "status": "IMPLEMENTED + VERIFIED",
+      "evidence": "docs/",
+      "limitation": "",
+      "critical": false
+    }
+  ]
+}

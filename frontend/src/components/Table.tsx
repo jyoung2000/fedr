@@ -8,6 +8,8 @@ export interface Column<T> {
   /** hide the stacked label on mobile */
   noLabel?: boolean;
   width?: string;
+  /** extra class on the th/td, e.g. "sticky-right" for an always-visible action column */
+  className?: string;
 }
 
 interface Props<T> {
@@ -31,7 +33,7 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, empty, dense, capt
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c.key} scope="col" className={c.align === "right" ? "num" : undefined} style={c.width ? { width: c.width } : undefined}>
+              <th key={c.key} scope="col" className={`${c.align === "right" ? "num" : ""} ${c.className ?? ""}`.trim() || undefined} style={c.width ? { width: c.width } : undefined}>
                 {c.header}
               </th>
             ))}
@@ -58,7 +60,7 @@ export function Table<T>({ columns, rows, rowKey, onRowClick, empty, dense, capt
                 }
               >
                 {columns.map((c) => (
-                  <td key={c.key} data-label={typeof c.header === "string" ? c.header : c.key} className={`${c.align === "right" ? "num" : ""} ${c.noLabel ? "no-label" : ""}`}>
+                  <td key={c.key} data-label={typeof c.header === "string" ? c.header : c.key} className={`${c.align === "right" ? "num" : ""} ${c.noLabel ? "no-label" : ""} ${c.className ?? ""}`}>
                     {c.render(row)}
                   </td>
                 ))}

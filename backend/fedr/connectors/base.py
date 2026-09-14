@@ -54,11 +54,15 @@ class HealthTracker:
         self.order_failures: deque[float] = deque(maxlen=200)
         self.rate_limited_until: float = 0.0
         self.maintenance: bool = False
+        self.clock_drift_ms: int | None = None  # local - venue server clock (see fedr/core/clock.py)
+        self.clock_checked_ms: int = 0
         self.ws_connected: bool | None = None
         self.last_market_data_ms: int = 0
         self.last_balance_ms: int = 0
         self.orders_ok: int = 0
         self.orders_failed: int = 0
+        self.data_unhealthy: bool = False  # set by the market-data quality gate
+        self.data_reason: str | None = None
 
     def record_latency(self, ms: float) -> None:
         self.latencies.append(ms)
@@ -99,6 +103,9 @@ class HealthTracker:
         if self.maintenance:
             health = VenueHealth.BLOCKED
             reasons.append("exchange maintenance")
+        if self.data_unhealthy:
+            health = max_health(health, VenueHealth.UNHEALTHY)
+            reasons.append(f"MARKET DATA UNHEALTHY ({self.data_reason or 'repeated rejections'})")
         if self.rate_limited:
             health = max_health(health, VenueHealth.DEGRADED)
             reasons.append("rate limited")
@@ -110,6 +117,14 @@ class HealthTracker:
                 health, VenueHealth.UNHEALTHY if md_age > market_data_max_age_ms * 4 else VenueHealth.DEGRADED
             )
             reasons.append(f"market data {md_age // 1000}s old")
+        if self.clock_drift_ms is not None and abs(self.clock_drift_ms) >= 10_000:
+            health = max_health(health, VenueHealth.UNHEALTHY)
+            reasons.append(
+                f"clock drift {self.clock_drift_ms} ms vs venue (signed requests will be rejected)"
+            )
+        elif self.clock_drift_ms is not None and abs(self.clock_drift_ms) >= 1_000:
+            health = max_health(health, VenueHealth.DEGRADED)
+            reasons.append(f"clock drift {self.clock_drift_ms} ms vs venue")
         lat = self.avg_latency_ms
         if lat is not None and lat > 2500:
             health = max_health(health, VenueHealth.DEGRADED)

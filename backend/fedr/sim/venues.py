@@ -196,6 +196,8 @@ class SyntheticPerpVenue(SyntheticCexVenue):
         super().__init__(market, name, pairs, taker_fee_pct)
         self.kind = VenueKind.PERP
         self.capabilities.update({"funding", "positions"})
+        self.premium = Decimal("1.0004")  # perp trades at a small premium to spot (positive basis)
+        self.funding_rate = Decimal("0.0001")  # per 8h interval, fraction
 
     async def load_markets(self) -> dict[str, MarketInfo]:
         self.markets = {}
@@ -226,8 +228,7 @@ class SyntheticPerpVenue(SyntheticCexVenue):
             else next(n for n, v in self.sim.venues.items() if v.kind == "cex")
         )
         ob = self.sim.order_book(source, spot, levels=min(depth, 40))
-        # perp trades at a small premium to spot (positive basis) in the synthetic world
-        prem = Decimal("1.0004")
+        prem = self.premium
         for lv in ob.bids + ob.asks:
             lv.price = (lv.price * prem).quantize(Decimal("0.000001"))
         ob.venue, ob.symbol = self.name, symbol
@@ -236,4 +237,4 @@ class SyntheticPerpVenue(SyntheticCexVenue):
         return ob
 
     async def fetch_funding_rate(self, symbol: str) -> dict:
-        return {"fundingRate": 0.0001, "interval": "8h", "symbol": symbol}
+        return {"fundingRate": float(self.funding_rate), "interval": "8h", "symbol": symbol}

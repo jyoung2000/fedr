@@ -18,6 +18,7 @@ from fedr.core.logging import get_logger
 from fedr.core.models import now_ms
 from fedr.core.money import D
 from fedr.marketdata.orderbook import OrderBook
+from fedr.marketdata.quality import MarketDataQuality, QualityPolicy
 
 log = get_logger("marketdata")
 
@@ -50,10 +51,9 @@ class PriceIndex:
 
     def update_from_book(self, book: OrderBook) -> None:
         mid = book.mid
-        if mid is None:
-            return
+        if mid is None or ":" in book.symbol:
+            return  # derivatives (BASE/QUOTE:SETTLE) trade at a premium/discount: never a spot price reference
         base, _, quote = book.symbol.partition("/")
-        quote = quote.split(":")[0]
         qpx = STABLES.get(quote) or self.get(quote)
         if qpx is None:
             return
@@ -85,10 +85,15 @@ class MarketDataHub:
         self.prices = PriceIndex()
         self._tasks: list[asyncio.Task] = []
         self._on_update = on_update
+        self.on_rapid_move = None  # async (venue, symbol, move_pct) -> None
+        self._mids: dict[tuple[str, str], list[tuple[int, Decimal]]] = {}
         self.ws_enabled = True
         self.rest_interval_ms = 2000
         self.depth = 50
         self.stats: dict[str, dict] = {}
+        self.rejections: dict[str, int] = {}
+        self.quality = MarketDataQuality(QualityPolicy())
+        self.on_reject: Callable[[str, str], Awaitable[None]] | None = None
         self._running = False
 
     # ---- access ---------------------------------------------------------------
@@ -99,11 +104,20 @@ class MarketDataHub:
         return {v: b for (v, s), b in self.books.items() if s == symbol}
 
     async def ingest(self, book: OrderBook) -> None:
-        if not book.is_valid():
+        reason = self.quality.validate(book, self.books_for(book.symbol))
+        if reason is not None:
             self._stat(book.venue)["invalid"] += 1
+            self.rejections[book.venue] = self.rejections.get(book.venue, 0) + 1
+            log.debug("market data rejected", venue=book.venue, symbol=book.symbol, reason=reason)
+            if self.on_reject:
+                try:
+                    await self.on_reject(book.venue, reason)
+                except Exception as exc:  # pragma: no cover
+                    log.error("on_reject callback failed", error=str(exc))
             return
         self.books[(book.venue, book.symbol)] = book
         self.prices.update_from_book(book)
+        await self._check_rapid_move(book)
         st = self._stat(book.venue)
         st["updates"] += 1
         st["last_ms"] = now_ms()
@@ -113,6 +127,35 @@ class MarketDataHub:
                 await self._on_update(book.venue, book.symbol)
             except Exception as exc:  # pragma: no cover - callback errors must not kill feeds
                 log.error("on_update callback failed", error=str(exc))
+
+    # ---- rapid market move detection (feeds the RAPID_MARKET_MOVE breaker) ----
+    RAPID_MOVE_WINDOW_MS = 10_000
+    RAPID_MOVE_PCT = 3.0
+
+    async def _check_rapid_move(self, book) -> None:
+        mid = book.mid
+        if mid is None:
+            return
+        key = (book.venue, book.symbol)
+        hist = self._mids.setdefault(key, [])
+        ts = book.ts_ms or now_ms()
+        hist.append((ts, mid))
+        cutoff = ts - self.RAPID_MOVE_WINDOW_MS
+        while hist and hist[0][0] < cutoff:
+            hist.pop(0)
+        del hist[:-200]
+        if len(hist) < 2:
+            return
+        oldest = hist[0][1]
+        if oldest <= 0:
+            return
+        move_pct = abs(mid - oldest) / oldest * 100
+        if float(move_pct) >= self.RAPID_MOVE_PCT and self.on_rapid_move is not None:
+            hist.clear()  # one alert per burst
+            try:
+                await self.on_rapid_move(book.venue, book.symbol, move_pct)
+            except Exception as exc:  # pragma: no cover
+                log.error("on_rapid_move callback failed", error=str(exc))
 
     def _stat(self, venue: str) -> dict:
         return self.stats.setdefault(

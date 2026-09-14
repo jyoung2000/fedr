@@ -15,7 +15,16 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from fedr.core.enums import Chain, Decision, OrderSide, OrderStatus, Strategy, TradeStatus, TradingMode
+from fedr.core.enums import (
+    Chain,
+    CircuitBreakerReason,
+    Decision,
+    OrderSide,
+    OrderStatus,
+    Strategy,
+    TradeStatus,
+    TradingMode,
+)
 from fedr.core.logging import get_logger
 from fedr.core.models import Fill, Opportunity, OrderRequest, OrderResult, TradeRecord, new_id, now_ms
 from fedr.core.money import ZERO, D, fmt_money
@@ -448,6 +457,11 @@ class FlashLoanEngine:
         if int(receipt["status"]) != 1:
             tr.status = TradeStatus.FAILED
             tr.explanation = f"Transaction reverted on-chain (gas burned {fmt_money(gas_usd)})."
+            await self.ctx.breakers.trip(
+                CircuitBreakerReason.FLASH_LOAN_FAILURE,
+                f"flash-loan tx reverted on {chain.value}: {tx_hash.hex()[:12]}… gas burned {fmt_money(gas_usd)}",
+                scope="strategy:flash_loan",
+            )
             tr.buy = OrderResult(
                 request=buy_req,
                 order_id=new_id("fl"),

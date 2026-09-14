@@ -19,6 +19,7 @@ from fedr.connectors.dex.gateway_client import GatewayClient, GatewayError
 from fedr.connectors.dex.gateway_connector import GatewayConnector
 from fedr.connectors.dex.registry import DEFAULT_DEXES, DEXES
 from fedr.connectors.paper.ledger import PaperLedger
+from fedr.core.clock import WARN_DRIFT_MS, apply_drift, measure_drift
 from fedr.core.enums import Chain, CircuitBreakerReason, Decision, Strategy, TradingMode, VenueKind
 from fedr.core.logging import configure_logging, get_logger
 from fedr.core.models import TradeRecord, new_id, now_ms
@@ -35,21 +36,50 @@ from fedr.engine.experience import ExperienceEngine
 from fedr.engine.flashloan import FlashLoanEngine
 from fedr.engine.inventory import InventoryManager
 from fedr.engine.opportunity import OpportunityEngine
+from fedr.engine.positions import PositionManager
 from fedr.engine.readiness import live_readiness, startup_health
 from fedr.engine.rebalancer import Rebalancer
 from fedr.engine.reconciliation import Reconciler
 from fedr.engine.shadow import ShadowRecorder
 from fedr.marketdata.gas import GasOracle
 from fedr.marketdata.hub import MarketDataHub
-from fedr.security.crypto import SecretBox, hash_phrase, load_or_create_master_key
+from fedr.security.crypto import SecretBox, hash_phrase, load_or_create_master_key, load_or_create_ui_token
 from fedr.sim.synthetic import default_synthetic, dex_pairs_for
 from fedr.sim.venues import SyntheticCexVenue, SyntheticDexVenue, SyntheticPerpVenue
 from fedr.wallets.manager import WalletManager
 from fedr.wallets.transfers import DepositMonitor, WithdrawalService
 
+CARRY_STRATEGIES = (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS)
+
 log = get_logger("app")
 
 LIVE_CONFIRMATION_PHRASE = "ACTIVATE LIVE TRADING"
+
+
+class Metrics:
+    """Process-lifetime counters for observability (also persisted per trade in the database)."""
+
+    def __init__(self):
+        self.opportunities_evaluated = 0
+        self.opportunities_executable = 0
+        self.opportunities_blocked = 0
+        self.trades_started = 0
+        self.trades_filled = 0
+        self.trades_failed = 0
+        self.trades_aborted = 0
+        self.trades_hedged = 0
+        self.gross_usd = ZERO
+        self.fees_usd = ZERO
+        self.gas_usd = ZERO
+        self.net_usd = ZERO
+        self.prediction_error_abs_usd = ZERO
+        self.breaker_trips = 0
+        self.market_data_updates = 0
+        self.market_data_rejections = 0
+        self.connector_errors = 0
+
+    def as_dict(self) -> dict:
+        return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in self.__dict__.items()}
 
 
 class FedrApp:
@@ -67,6 +97,7 @@ class FedrApp:
         self.opportunities: OpportunityEngine | None = None
         self.executor: ExecutionEngine | None = None
         self.flashloan: FlashLoanEngine | None = None
+        self.positions: PositionManager | None = None
         self.reconciler: Reconciler | None = None
         self.estop: EmergencyStop | None = None
         self.shadow: ShadowRecorder | None = None
@@ -80,11 +111,27 @@ class FedrApp:
         self.events: list[dict] = []  # recent UI events (trades, breakers, deposits)
         self.status_message = "starting"
         self._subscribers: set[asyncio.Queue] = set()
+        self.auth_token: str | None = None
+        self.auth_token_source: str = "none"
+        self.metrics = Metrics()
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         configure_logging(self.env.log_level, self.env.log_json)
+        problems = self.env.validate_startup()
+        if problems:
+            for pr in problems:
+                log.error("startup configuration error", problem=pr)
+            raise RuntimeError("unsafe or invalid configuration: " + "; ".join(problems))
         self.env.ensure_dirs()
+        self.auth_token, self.auth_token_source = load_or_create_ui_token(
+            self.env.auth_token, self.env.data_dir
+        )
+        if self.auth_token_source == "generated":
+            log.warning(
+                "no FEDR_AUTH_TOKEN set - a UI access token was generated",
+                path=str(self.env.data_dir / "config" / "ui-token"),
+            )
         self.db = Database(self.env.database_url_resolved)
         await self.db.init()
         self.repo = Repo(self.db)
@@ -117,6 +164,7 @@ class FedrApp:
                 )
         await self._build_context()
         await self.rebuild_connectors()
+        await self.positions.load()
         self.estop = EmergencyStop(self.ctx, self.reconciler)
         await self.estop.restore()
         rows = await self.repo.load_active_breakers()
@@ -141,6 +189,7 @@ class FedrApp:
             asyncio.create_task(self._balance_loop(), name="balances"),
             asyncio.create_task(self._reconcile_loop(), name="reconcile"),
             asyncio.create_task(self._housekeeping_loop(), name="housekeeping"),
+            asyncio.create_task(self._positions_loop(), name="positions"),
         ]
         await asyncio.sleep(0.5)
         self.startup_check = await startup_health(self)
@@ -175,8 +224,27 @@ class FedrApp:
         return self.settings.general.mode
 
     # ------------------------------------------------------------------ context / connectors
+    async def _on_market_data_reject(self, venue: str, reason: str) -> None:
+        self.metrics.market_data_rejections += 1
+        c = self.ctx.connectors.get(venue) if self.ctx else None
+        if c is None:
+            return
+        unhealthy = self.ctx.hub.quality.is_unhealthy(venue)
+        c.health_tracker.data_unhealthy = unhealthy
+        c.health_tracker.data_reason = reason if unhealthy else None
+        if unhealthy:
+            await self.ctx.breakers.trip(
+                CircuitBreakerReason.MARKET_DATA_FAILURE, f"{venue}: {reason}"[:200], scope=f"venue:{venue}"
+            )
+            if self.repo:
+                await self.repo.add_risk_event(
+                    self.mode, "warning", "market_data_unhealthy", f"{venue}: {reason}", {"venue": venue}
+                )
+
     async def _build_context(self) -> None:
         hub = MarketDataHub(on_update=None)
+        hub.on_reject = self._on_market_data_reject
+        hub.on_rapid_move = self._on_rapid_move
         hub.ws_enabled = self.settings.advanced.websocket_market_data
         hub.rest_interval_ms = self.settings.advanced.rest_poll_interval_ms
         hub.depth = self.settings.advanced.orderbook_depth
@@ -204,12 +272,14 @@ class FedrApp:
         self.opportunities = OpportunityEngine(self.ctx)
         self.executor = ExecutionEngine(self.ctx, self.opportunities, on_trade=self._on_trade)
         self.flashloan = FlashLoanEngine(self.ctx, self.wallets, self.env)
+        self.positions = PositionManager(self.ctx, self.executor)
         self.ctx.flash_loan_simulator = self.flashloan.simulate
         self.reconciler = Reconciler(self.ctx)
         self.shadow = ShadowRecorder(self.ctx)
-        self.withdrawals = WithdrawalService(self.wallets, self.env, hub.prices.get)
+        self.withdrawals = WithdrawalService(self.wallets, self.env, hub.prices.get, token_registry={})
 
     async def _persist_breakers(self, breakers: list[Breaker]) -> None:
+        self.metrics.breaker_trips += 1
         if self.repo:
             await self.repo.save_breakers(breakers)
         self._push_event("breakers", {"active": [b.as_dict() for b in breakers]})
@@ -407,6 +477,13 @@ class FedrApp:
                             for sym in c.markets:
                                 await self.ctx.hub.ingest(await c.fetch_order_book(sym))
                 opps = await self.opportunities.scan()
+                self.metrics.opportunities_evaluated += len(opps)
+                self.metrics.opportunities_executable += sum(
+                    1 for o in opps if o.decision is Decision.SAFE_TO_EXECUTE
+                )
+                self.metrics.opportunities_blocked += sum(
+                    1 for o in opps if o.decision is not Decision.SAFE_TO_EXECUTE
+                )
                 if self.settings.general.shadow_mode and self.shadow:
                     for o in opps:
                         await self.shadow.record(o)
@@ -424,6 +501,8 @@ class FedrApp:
                         break
                     if o.strategy is Strategy.FLASH_LOAN:
                         await self.flashloan.execute(o, self.opportunities, trigger="auto")
+                    elif o.strategy in CARRY_STRATEGIES:
+                        await self.positions.open_from_opportunity(o, trigger="auto")
                     else:
                         await self.executor.execute(o, trigger="auto")
                     break  # one execution per scan: the next tick re-evaluates everything with fresh quotes
@@ -443,14 +522,86 @@ class FedrApp:
             except Exception as exc:
                 log.error("health loop error", error=str(exc))
 
+    async def _on_rapid_move(self, venue: str, symbol: str, move_pct) -> None:
+        await self.ctx.breakers.trip(
+            CircuitBreakerReason.RAPID_MARKET_MOVE,
+            f"{symbol} moved {float(move_pct):.2f}% on {venue} within {self.ctx.hub.RAPID_MOVE_WINDOW_MS // 1000}s",
+            scope=f"symbol:{symbol}",
+        )
+        if self.repo:
+            await self.repo.add_risk_event(
+                self.mode,
+                "warning",
+                "rapid_market_move",
+                f"{symbol} moved {float(move_pct):.2f}% on {venue}",
+                {"venue": venue, "symbol": symbol, "move_pct": str(move_pct)},
+            )
+
     async def _health_check_all(self) -> None:
         for c in list(self.ctx.connectors.values()):
             if not c.connected:
                 continue
+            if (
+                c.kind in (VenueKind.CEX, VenueKind.PERP)
+                and now_ms() - c.health_tracker.clock_checked_ms > 300_000
+            ):
+                sample = await measure_drift(c)
+                apply_drift(c.health_tracker, sample)
+                if sample.drift_ms is not None and abs(sample.drift_ms) >= WARN_DRIFT_MS:
+                    log.warning(
+                        "clock drift vs venue", venue=c.name, drift_ms=sample.drift_ms, rtt_ms=sample.rtt_ms
+                    )
+                    if self.repo and abs(sample.drift_ms) >= 10_000:
+                        await self.repo.add_risk_event(
+                            self.mode,
+                            "warning",
+                            "clock_drift",
+                            f"local clock differs from {c.name} by {sample.drift_ms} ms",
+                            {"venue": c.name, "drift_ms": sample.drift_ms},
+                        )
             try:
                 self.ctx.health[c.name] = await asyncio.wait_for(c.health_check(), timeout=15)
             except Exception as exc:
+                self.metrics.connector_errors += 1
                 log.warning("health check failed", venue=c.name, error=str(exc)[:120])
+            if c.health_tracker.rate_limited:
+                n = self.ctx.breakers.record(f"rate_limit:{c.name}", window_s=300)
+                if n >= 3:
+                    await self.ctx.breakers.trip(
+                        CircuitBreakerReason.RATE_LIMIT,
+                        f"{c.name} rate-limited {n} times in 5 min: pausing the venue",
+                        scope=f"venue:{c.name}",
+                    )
+            else:
+                await self.ctx.breakers.reset(CircuitBreakerReason.RATE_LIMIT, scope=f"venue:{c.name}")
+            # market-data quality recovery: once the feed is clean again, lift the venue-scoped breaker
+            if c.health_tracker.data_unhealthy and not self.ctx.hub.quality.is_unhealthy(c.name):
+                c.health_tracker.data_unhealthy = False
+                c.health_tracker.data_reason = None
+                await self.ctx.breakers.reset(
+                    CircuitBreakerReason.MARKET_DATA_FAILURE, scope=f"venue:{c.name}"
+                )
+            if c.health_tracker.maintenance:
+                await self.ctx.breakers.trip(
+                    CircuitBreakerReason.EXCHANGE_MAINTENANCE,
+                    f"{c.name} reports maintenance",
+                    scope=f"venue:{c.name}",
+                )
+            else:
+                await self.ctx.breakers.reset(
+                    CircuitBreakerReason.EXCHANGE_MAINTENANCE, scope=f"venue:{c.name}"
+                )
+            ws = self.ctx.hub.stats.get(c.name, {}).get("ws")
+            if ws is False and "ws" in c.capabilities and self.settings.advanced.websocket_market_data:
+                await self.ctx.breakers.trip(
+                    CircuitBreakerReason.WEBSOCKET_FAILURE,
+                    f"{c.name} websocket down - REST fallback active (DEGRADED)",
+                    scope=f"venue:{c.name}:ws",
+                )
+            else:
+                await self.ctx.breakers.reset(
+                    CircuitBreakerReason.WEBSOCKET_FAILURE, scope=f"venue:{c.name}:ws"
+                )
         if self.gateway:
             self.gateway_ok = await self.gateway.ping()
 
@@ -458,25 +609,38 @@ class FedrApp:
         while True:
             try:
                 await asyncio.sleep(15)
-                for chain in self._chains_in_use():
-                    await self.ctx.gas_oracle.refresh(chain)
-                    snap = self.ctx.gas_oracle.snapshot(chain)
-                    if snap is not None:
-                        regime = self.ctx.gas_guard.regime(chain, snap.gas_price_native)
-                        if regime.value == "extreme":
-                            await self.ctx.breakers.trip(
-                                CircuitBreakerReason.GAS_SPIKE,
-                                f"gas on {chain.value} is {snap.gas_price_native} (extreme regime)",
-                                scope=f"chain:{chain.value}",
-                            )
-                        else:
-                            await self.ctx.breakers.reset(
-                                CircuitBreakerReason.GAS_SPIKE, scope=f"chain:{chain.value}"
-                            )
+                await self._gas_check_once()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.error("gas loop error", error=str(exc))
+
+    async def _gas_check_once(self) -> None:
+        for chain in self._chains_in_use():
+            await self.ctx.gas_oracle.refresh(chain)
+            snap = self.ctx.gas_oracle.snapshot(chain)
+            if snap is None and chain in self.ctx.gas_oracle.last_error:
+                n = self.ctx.breakers.record(f"rpc_fail:{chain.value}", window_s=300)
+                if n >= 3:
+                    await self.ctx.breakers.trip(
+                        CircuitBreakerReason.RPC_FAILURE,
+                        f"gas/RPC data for {chain.value} unavailable: {self.ctx.gas_oracle.last_error[chain][:120]}",
+                        scope=f"chain:{chain.value}",
+                    )
+            elif snap is not None:
+                await self.ctx.breakers.reset(CircuitBreakerReason.RPC_FAILURE, scope=f"chain:{chain.value}")
+            if snap is not None:
+                regime = self.ctx.gas_guard.regime(chain, snap.gas_price_native)
+                if regime.value == "extreme":
+                    await self.ctx.breakers.trip(
+                        CircuitBreakerReason.GAS_SPIKE,
+                        f"gas on {chain.value} is {snap.gas_price_native} (extreme regime)",
+                        scope=f"chain:{chain.value}",
+                    )
+                else:
+                    await self.ctx.breakers.reset(
+                        CircuitBreakerReason.GAS_SPIKE, scope=f"chain:{chain.value}"
+                    )
 
     async def _balance_loop(self) -> None:
         while True:
@@ -539,10 +703,57 @@ class FedrApp:
                 await asyncio.sleep(self.settings.advanced.reconciliation_interval_s)
                 self.ctx.extra["recent_trades"] = self.executor.recent[-20:] if self.executor else []
                 await self.reconciler.run_once()
+                if self.positions and self.positions.open and not self.ctx.is_simulated_execution:
+                    await self.positions.reconcile(await self._venue_perp_shorts())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.error("reconcile loop error", error=str(exc))
+
+    async def _positions_loop(self) -> None:
+        """Carry positions: mark, accrue due funding, apply exit rules (every 10 s)."""
+        while True:
+            try:
+                await asyncio.sleep(10)
+                if not self.positions or not self.positions.open:
+                    continue
+                await self.positions.accrue_due_funding(self._funding_rate)
+                marks = await self.positions.monitor()
+                self.ctx.extra["positions"] = marks
+                for m in marks:
+                    if m.get("exit_reason"):
+                        self._push_event("position", {"id": m["id"], "exit_reason": m["exit_reason"]})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("positions loop error", error=str(exc))
+
+    async def _funding_rate(self, venue: str, symbol: str) -> Decimal | None:
+        c = self.ctx.connectors.get(venue)
+        fetch = getattr(c, "fetch_funding_rate", None)
+        if c is None or fetch is None:
+            return None
+        raw = await fetch(symbol)
+        if not raw or raw.get("fundingRate") is None:
+            return None
+        return D(raw["fundingRate"])
+
+    async def _venue_perp_shorts(self) -> dict[str, Decimal]:
+        """Short size per perp symbol as reported by the venues (live/testnet reconciliation input)."""
+        out: dict[str, Decimal] = {}
+        for c in self.ctx.connectors.values():
+            fetch = getattr(c, "fetch_positions", None)
+            if c.kind is not VenueKind.PERP or fetch is None or not c.connected:
+                continue
+            try:
+                for pos in await fetch():
+                    sym = str(pos.get("symbol") or "")
+                    size = D(pos.get("contracts") or pos.get("contractSize") or 0)
+                    if str(pos.get("side") or "").lower() == "short" and size:
+                        out[sym] = out.get(sym, ZERO) + abs(size)
+            except ConnectorError as exc:
+                log.warning("position fetch failed", venue=c.name, error=str(exc)[:120])
+        return out
 
     async def _housekeeping_loop(self) -> None:
         while True:

@@ -389,6 +389,8 @@ export interface AllowlistEntry {
   chain: string;
   address: string;
   label: string;
+  /** epoch ms when the entry was added; withdrawals to new addresses are refused for `new_address_delay_minutes` */
+  added_at_ms?: number | null;
 }
 
 export interface WalletsData {
@@ -398,7 +400,10 @@ export interface WalletsData {
   chains: ChainCard[];
   capital: Capital;
   emergency_reserve_usd: DecimalStr;
-  deposits: { chain: string; asset: string; amount: DecimalStr; ts: number }[];
+  deposits: DepositRow[];
+  withdrawals?: WithdrawalRow[];
+  new_address_delay_minutes?: number;
+  token_registry?: TokenRegistry;
   allowlist: AllowlistEntry[];
   require_allowlist: boolean;
   simulated: boolean;
@@ -421,8 +426,12 @@ export interface WithdrawQuote {
   amount: DecimalStr;
   destination: string;
   network_fee_native: DecimalStr;
+  /** native asset the network fee is paid in (ETH, SOL, POL, …) */
+  network_fee_asset?: string;
   network_fee_usd: DecimalStr | null;
   estimated_received: DecimalStr;
+  /** true for ERC-20 / SPL token transfers (fee still paid in the native asset) */
+  is_token?: boolean;
   available: boolean;
   reason: string | null;
   allowlisted: boolean;
@@ -591,4 +600,120 @@ export interface BacktestResult {
   results: Record<string, unknown>;
   disclaimer?: string;
   [k: string]: unknown;
+}
+
+/* ---- wallets: ledgers and token registry (routes/wallets.py) ---- */
+export interface TokenInfo {
+  address: string;
+  decimals: number;
+  [k: string]: unknown;
+}
+/** chain -> ASSET SYMBOL -> token info */
+export type TokenRegistry = Record<string, Record<string, TokenInfo>>;
+
+export interface DepositRow {
+  chain: string;
+  asset: string;
+  amount: DecimalStr;
+  ts?: number;
+  detected_at?: string | null;
+  status?: string;
+  tx_hash?: string | null;
+  address?: string | null;
+}
+
+export interface WithdrawalRow {
+  id: string;
+  chain: string;
+  asset: string;
+  amount: DecimalStr;
+  destination: string;
+  status: string; // requested | broadcast | confirmed | failed | rejected
+  tx_hash?: string | null;
+  fee_native?: DecimalStr | null;
+  error?: string | null;
+  requested_at?: string | null;
+  requested_at_ms?: number;
+  ts?: number;
+}
+
+/* ---- carry positions (routes/trading.py → engine/positions.py) ---- */
+export interface PositionRow {
+  id: string;
+  strategy: string;
+  pair: string;
+  spot_venue: string;
+  perp_venue: string;
+  perp_symbol: string;
+  size_base: DecimalStr;
+  status: string; // open | closing | closed | failed
+  entry_spot_price: DecimalStr;
+  entry_perp_price: DecimalStr;
+  entry_basis_pct: DecimalStr;
+  funding_collected_usd: DecimalStr;
+  fees_usd: DecimalStr;
+  exit_spot_price: DecimalStr | null;
+  exit_perp_price: DecimalStr | null;
+  realized_net_usd: DecimalStr | null;
+  exit_reason: string | null;
+  funding_periods: number;
+  opened_at: string | null;
+  closed_at: string | null;
+  /* live mark — open rows only */
+  spot_price?: DecimalStr;
+  perp_price?: DecimalStr;
+  basis_pct?: DecimalStr;
+  unrealized_usd?: DecimalStr;
+  funding_usd?: DecimalStr;
+  liquidation_distance_pct?: DecimalStr;
+  hours_open?: DecimalStr;
+  suspended?: string | null;
+}
+
+export interface PositionsPolicy {
+  exit_basis_pct: DecimalStr;
+  funding_flip_periods: number;
+  max_hold_hours: number;
+  min_liquidation_distance_pct: DecimalStr;
+  max_basis_widening_pct: DecimalStr;
+  funding_interval_hours: DecimalStr;
+  flatten_on_emergency_stop: boolean;
+}
+
+export interface PositionsResponse {
+  open: PositionRow[];
+  history: PositionRow[];
+  policy: PositionsPolicy | null;
+  verification: string;
+}
+
+/* ---- health probes (main.py) and process metrics (routes/system.py) ---- */
+export interface HealthReady {
+  status: string; // ready | not-ready
+  checks: Record<string, boolean>;
+  mode?: string;
+}
+export interface HealthLive {
+  status: string;
+}
+
+export interface VenueFeedStats {
+  updates: number;
+  invalid: number;
+  errors: number;
+  last_ms: number;
+  source: string | null;
+  ws: boolean | null;
+}
+
+export interface SystemMetrics {
+  mode: Mode;
+  uptime_s: number;
+  process: Record<string, number | string>;
+  persisted: Record<string, number | string>;
+  market_data: { books: number; venues: Record<string, VenueFeedStats>; rejections: Record<string, number> };
+  venues: Record<string, Health | string>;
+  breakers: Breaker[];
+  open_trades: number;
+  gas: Record<string, GasInfo>;
 }

@@ -224,6 +224,7 @@ class MevSettings(BaseModel):
 class SecuritySettings(BaseModel):
     withdrawal_allowlist: list[dict[str, str]] = Field(default_factory=list)  # [{chain,address,label}]
     require_allowlist_for_withdrawals: bool = True
+    new_address_delay_minutes: int = 60  # withdrawals to an address added less than this ago are refused
     wallet_backup_confirmed: bool = False
     session_timeout_minutes: int = 240
 

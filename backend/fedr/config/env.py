@@ -83,6 +83,38 @@ class EnvSettings(BaseSettings):
     def flashloan_contract_for(self, chain: str) -> str | None:
         return getattr(self, f"flashloan_contract_{chain}", None)
 
+    def validate_startup(self) -> list[str]:
+        """Fail-safe configuration checks. Returns a list of fatal problems (empty = ok)."""
+        problems: list[str] = []
+        if self.port < 1 or self.port > 65535:
+            problems.append(f"FEDR_PORT {self.port} is invalid")
+        if self.default_mode not in ("paper", "simulation", "testnet"):
+            problems.append(
+                f"FEDR_DEFAULT_MODE must be paper|simulation|testnet (got '{self.default_mode}'); live can never be a boot default"
+            )
+        if self.live_trading_allowed and not (self.auth_token and len(self.auth_token) >= 16):
+            problems.append(
+                "FEDR_LIVE_TRADING_ALLOWED=true requires FEDR_AUTH_TOKEN (>= 16 chars) - refusing to start with live enabled and no authentication"
+            )
+        if self.gateway_enabled and not self.gateway_url.startswith(("http://", "https://")):
+            problems.append(f"FEDR_GATEWAY_URL '{self.gateway_url}' must be an http(s) URL")
+        if self.master_key:
+            import base64
+
+            try:
+                if len(base64.b64decode(self.master_key)) != 32:
+                    problems.append("FEDR_MASTER_KEY must decode to 32 bytes")
+            except Exception:
+                problems.append("FEDR_MASTER_KEY must be base64")
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            probe = self.data_dir / ".write-test"
+            probe.write_text("ok")
+            probe.unlink()
+        except Exception as exc:
+            problems.append(f"FEDR_DATA_DIR {self.data_dir} is not writable: {exc}")
+        return problems
+
     def ensure_dirs(self) -> None:
         for sub in (
             "database",

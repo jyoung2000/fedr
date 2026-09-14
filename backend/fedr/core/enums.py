@@ -114,6 +114,8 @@ class CircuitBreakerReason(str, Enum):
     DEX_TX_FAILURE = "dex_tx_failure"
     RPC_FAILURE = "rpc_failure"
     WEBSOCKET_FAILURE = "websocket_failure"
+    MARKET_DATA_FAILURE = "market_data_failure"
+    FLASH_LOAN_FAILURE = "flash_loan_failure"
     BALANCE_DISCREPANCY = "balance_discrepancy"
     POSITION_DISCREPANCY = "position_discrepancy"
     PREDICTION_ERROR = "prediction_error"

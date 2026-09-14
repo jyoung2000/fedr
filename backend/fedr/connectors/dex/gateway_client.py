@@ -8,6 +8,7 @@ Router quotes return a ``quoteId`` that ``execute-quote`` consumes.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -81,12 +82,56 @@ class GatewayClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         self._client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=timeout_s)
+        self.retries = 0
         self.last_latency_ms: float | None = None
 
     async def close(self) -> None:
         await self._client.aclose()
 
+    # Rate limiting + backoff. Gateway is a single local process: keep it well under its own limits and
+    # never hammer it during an incident. Only *idempotent* GETs are retried; a POST (swap, wallet add)
+    # is sent exactly once - a timed-out swap must be resolved by polling the transaction, not by resending.
+    RATE_PER_SECOND = 20.0
+    BURST = 20.0
+    RETRY_STATUSES = (429, 502, 503, 504)
+    MAX_RETRIES = 3
+
+    async def _throttle(self) -> None:
+        now = time.monotonic()
+        if not hasattr(self, "_bucket"):
+            self._bucket, self._bucket_ts = self.BURST, now
+        self._bucket = min(self.BURST, self._bucket + (now - self._bucket_ts) * self.RATE_PER_SECOND)
+        self._bucket_ts = now
+        if self._bucket < 1:
+            wait = (1 - self._bucket) / self.RATE_PER_SECOND
+            await asyncio.sleep(wait)
+            self._bucket = 0.0
+        else:
+            self._bucket -= 1
+
     async def _request(
+        self, method: str, path: str, *, params: dict | None = None, json: dict | None = None
+    ) -> Any:
+        attempts = self.MAX_RETRIES if method.upper() == "GET" else 1
+        delay = 0.25
+        last: GatewayError | None = None
+        for attempt in range(attempts):
+            await self._throttle()
+            try:
+                return await self._request_once(method, path, params=params, json=json)
+            except GatewayError as exc:
+                last = exc
+                transient = (
+                    exc.status in self.RETRY_STATUSES or exc.status == 503 and "unreachable" in str(exc)
+                )
+                if attempt + 1 >= attempts or not transient:
+                    raise
+                self.retries += 1
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 2.0)
+        raise last  # pragma: no cover
+
+    async def _request_once(
         self, method: str, path: str, *, params: dict | None = None, json: dict | None = None
     ) -> Any:
         t0 = time.perf_counter()

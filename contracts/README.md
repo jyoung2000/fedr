@@ -21,7 +21,22 @@ Safety properties (see `src/FlashLoanArbitrage.sol`):
 **A reverted transaction still consumes gas.** The off-chain Profit Guard and Gas Guard account for that
 (failure reserve + stress gas) and the engine always simulates (`eth_call` + `eth_estimateGas`) before broadcasting.
 
-## Build & test (Foundry)
+## Build & test (no Foundry needed)
+
+```bash
+cd contracts && npm ci            # solc-js 0.8.28 + @openzeppelin/contracts 5.4.0 (pinned)
+node compile.js                   # standard-JSON compile, optimizer 200 runs, evm cancun → out/*.json
+cd ../backend && pytest tests/test_contract_evm.py -q   # 12 tests on a real EVM (eth-tester / py-evm)
+```
+
+The pytest suite deploys the compiled bytecode with mock pool/router/token contracts (`test/mocks/Mocks.sol`)
+and covers: profitable round-trip, `minProfit` revert, cannot-repay revert, min-out and deadline reverts,
+owner-only execution, unlisted router/token rejection, callback only from the configured pool and only for
+this initiator, pause, reentrancy, rescue + two-step ownership, and a gas ceiling. This verifies the
+contract's *logic*; it does not replace static analysis, a fork test against real Aave/Uniswap
+deployments, or an audit.
+
+## Fork tests (Foundry, optional)
 
 ```bash
 cd contracts
@@ -51,5 +66,8 @@ on Ethereum/Arbitrum/Optimism/Polygon, `0x2626664c2603336E57B271c5C0b26F421741e4
 
 ## Status
 
-Written against audited OpenZeppelin 5.x patterns. **Not audited. Not deployed. Not exercised on a fork in this build
-environment** (no RPC access). Test thoroughly on a fork and a testnet before any live activation.
+Classification (see `docs/PRODUCTION_VERIFICATION_MATRIX.md`, row ST-05): **IMPLEMENTED + PARTIALLY VERIFIED**.
+Compiles with solc 0.8.28; 12 EVM tests pass on eth-tester. **Not audited. Not deployed. Not exercised on a fork
+(no RPC access) and not statically analysed (slither/foundry binaries unreachable in the build environment).**
+Mainnet use is MUST BLOCK until a fork test suite and an independent audit exist. Tests passing does not make
+the contract safe; treat any deployment as at-risk capital.

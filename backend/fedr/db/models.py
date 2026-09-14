@@ -304,3 +304,79 @@ class MarketCache(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     __table_args__ = (Index("ix_market_key", "venue", "symbol", unique=True),)
+
+
+class SchemaVersion(Base):
+    __tablename__ = "schema_version"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    note: Mapped[str] = mapped_column(String(200), default="")
+
+
+class Deposit(Base):
+    """Detected incoming transfers. ``dedupe_key`` prevents double credit."""
+
+    __tablename__ = "deposits"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    chain: Mapped[str] = mapped_column(String(24), index=True)
+    asset: Mapped[str] = mapped_column(String(16))
+    amount: Mapped[str] = mapped_column(String(40))
+    address: Mapped[str] = mapped_column(String(128))
+    tx_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="confirmed"
+    )  # pending | confirmed | failed | reorged
+    confirmations: Mapped[int] = mapped_column(Integer, default=0)
+    dedupe_key: Mapped[str] = mapped_column(String(160), unique=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Withdrawal(Base):
+    """Every withdrawal request (idempotent via ``request_key``) and its lifecycle."""
+
+    __tablename__ = "withdrawals"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    chain: Mapped[str] = mapped_column(String(24))
+    asset: Mapped[str] = mapped_column(String(16))
+    amount: Mapped[str] = mapped_column(String(40))
+    destination: Mapped[str] = mapped_column(String(128))
+    request_key: Mapped[str] = mapped_column(String(160), unique=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="requested"
+    )  # requested | broadcast | confirmed | failed | rejected
+    tx_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    fee_native: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Position(Base):
+    """Open market-neutral carry positions (spot leg + perp leg)."""
+
+    __tablename__ = "positions"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    strategy: Mapped[str] = mapped_column(String(24))
+    pair: Mapped[str] = mapped_column(String(32))
+    spot_venue: Mapped[str] = mapped_column(String(40))
+    perp_venue: Mapped[str] = mapped_column(String(40))
+    perp_symbol: Mapped[str] = mapped_column(String(40))
+    size_base: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(16), index=True)  # open | closing | closed | failed
+    entry_spot_price: Mapped[str] = mapped_column(String(40))
+    entry_perp_price: Mapped[str] = mapped_column(String(40))
+    entry_basis_pct: Mapped[str] = mapped_column(String(40))
+    funding_collected_usd: Mapped[str] = mapped_column(String(40), default="0")
+    fees_usd: Mapped[str] = mapped_column(String(40), default="0")
+    exit_spot_price: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    exit_perp_price: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    realized_net_usd: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
