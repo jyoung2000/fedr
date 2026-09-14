@@ -127,7 +127,9 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
         ArbParams memory p = abi.decode(params, (ArbParams));
 
         uint256 intermediateOut = _swap(p.legA, asset, p.intermediate, amount);
-        uint256 assetBack = _swap(p.legB, p.intermediate, asset, intermediateOut);
+        // Leg B's proceeds return to this contract; profit is measured from the asset balance below,
+        // so the return value is intentionally unused (slither: redundant-statements fixed).
+        _swap(p.legB, p.intermediate, asset, intermediateOut);
 
         uint256 owed = amount + premium;
         uint256 balance = IERC20(asset).balanceOf(address(this));
@@ -135,7 +137,6 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
         // exact-amount approval for repayment (no infinite approvals)
         IERC20(asset).forceApprove(address(POOL), owed);
         emit ArbitrageExecuted(asset, amount, premium, balance - owed);
-        assetBack; // silence unused warning; profit is measured from balance
         return true;
     }
 

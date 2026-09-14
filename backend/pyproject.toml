@@ -29,7 +29,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "hypothesis>=6", "ruff>=0.5", "mypy>=1.10"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    # contract EVM tests (tests/test_contract_evm.py) run the compiled bytecode on a real EVM
+    "eth-tester>=0.13",
+    "py-evm>=0.10.1b1",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

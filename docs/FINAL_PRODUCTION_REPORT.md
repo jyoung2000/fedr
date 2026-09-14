@@ -22,7 +22,7 @@ generates `docs/PRODUCTION_VERIFICATION_MATRIX.md`, `docs/AUDIT_REPORT.json` and
 | Egress to exchanges, DEX aggregators, RPC nodes | no | no connector, market feed, order, swap, deposit, withdrawal or gas oracle was exercised against a real venue |
 | Docker registry | no | official base images and the Gateway image could not be pulled; a local daemon (overlay2) and an imported Debian rootfs were used to build and run the unmodified Dockerfile |
 | Hummingbot Gateway (source build) | no (JSR registry blocked) | Gateway never ran; app verified without it and with a stand-in for network isolation |
-| Foundry / slither binaries | no | contract verified by solc-js compile + py-evm tests only |
+| Foundry / slither | slither yes (PyPI + native solc via GitHub releases, installed during phase 4); foundry no | static analysis run (zero high/medium, `contracts/SLITHER_REPORT.md`); fork tests still blocked |
 | PyPI, npm registry, Playwright Chromium | yes | dependency audits, builds, UI QA ran |
 
 ## 3. Matrix summary (70 rows)
@@ -113,6 +113,26 @@ deliberately include their venue-execution dependency so a paper-verified engine
 live-capable. `docs/LIVE_VERIFICATION_RUNBOOK.md` gives the 18-step operator sequence with exact commands
 and expected evidence per step.
 
+## 4c. Phase-4 additions (final hardening pass)
+
+Re-probing the environment showed PyPI and GitHub release downloads reachable, which closed three gaps:
+
+* **Contract static analysis.** slither 0.11.6 with native solc 0.8.28 over `FlashLoanArbitrage.sol` +
+  OpenZeppelin: 17 informational/low results, **zero high- or medium-severity findings**; every result
+  triaged in `contracts/SLITHER_REPORT.md`; the one real (cosmetic) finding was fixed, the contract
+  recompiled and all 12 EVM tests re-passed. `scripts/verify_production.py` now runs slither
+  automatically when installed and fails on high-severity findings.
+* **UI QA against a real backend.** `qa/ui_qa.py` gained token authentication for live mode and ran
+  against a real simulation-mode FEDR process: 192 checks, 0 failures, 0 console errors at
+  1280/1024/768/400 across all 8 pages (matrix row UI-08).
+* **Clean-checkout verification.** Tracked files only, fresh venv, documented setup: install, frontend
+  build, contract compile, full test suites, app boot serving the UI and a ready health check — all pass.
+  This caught a real packaging gap (contract-test dependencies missing from the dev extras), now fixed
+  (matrix row RT-08).
+
+Still blocked after re-probing: exchange APIs, RPC endpoints, the Docker registry and solc's own binary
+host (all `000`/denied), so every venue-facing row remains ORANGE with its runbook step.
+
 ## 5. Test inventory
 
 | Suite | Count | How to run |
@@ -150,7 +170,7 @@ config, UI QA) is `scripts/verify_production.py --ui`; its output is `docs/PRODU
 | Can FEDR run live CEX↔DEX arbitrage? | **EXTERNAL VERIFICATION REQUIRED** — paper-verified against a synthetic DEX; Gateway never ran here (CX-03/RT-05 ORANGE). Runbook steps 9–10. |
 | Can FEDR run live DEX↔DEX arbitrage? | **EXTERNAL VERIFICATION REQUIRED** — newly paper-verified (ST-03 GREEN); on-chain execution unverified. Default OFF. |
 | Can FEDR run funding/basis live? | **EXTERNAL VERIFICATION REQUIRED** — full paper lifecycle verified (ST-04 GREEN); no real derivatives venue exercised. Default OFF. |
-| Can FEDR run flash-loan arbitrage live? | **NO** — MUST BLOCK until an independent audit and fork tests exist, then external verification. Default OFF. |
+| Can FEDR run flash-loan arbitrage live? | **NO** — MUST BLOCK until an independent audit and fork tests exist (static analysis now clean: zero high/medium slither findings), then external verification. Default OFF. |
 | Is Docker verified? | **YES, with a caveat** — runtime, hardening, persistence and network isolation verified against the built image; the official base images could not be pulled here (registry blocked), so build reproducibility needs one `docker compose build` on a normal host (runbook step 2). |
 | Are wallets verified? | **YES for custody** (encryption at rest, backup → restore into a fresh install, address verification, allowlists, idempotent withdrawals — all tested); **NO for on-chain movement** (no deposit or withdrawal ever touched a real network). |
 | Are real market data feeds verified? | **NO** — the quality gate and every consumer are verified offline; no egress here. One command closes it: runbook step 6. |

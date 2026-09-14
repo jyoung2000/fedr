@@ -25,8 +25,8 @@
       "command": "/home/user/fedr/.venv/bin/python -m pytest tests --ignore=tests/integration -q -p no:cacheprovider",
       "status": "PASS",
       "reason": "",
-      "seconds": 38.6,
-      "output_tail": "........................................................................ [ 37%]\n........................................................................ [ 75%]\n................................................                         [100%]\n192 passed in 37.72s\n",
+      "seconds": 50.5,
+      "output_tail": "........................................................................ [ 37%]\n........................................................................ [ 75%]\n................................................                         [100%]\n=============================== warnings summary ===============================\ntests/test_profit_guard_bypass.py::test_single_leg_submission_is_not_reachable_from_the_api_or_strategies\n  /home/user/fedr/.venv/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-24 (_connection_worker_thread)\n  \n  Traceback (most recent call last):\n    File \"/home/user/fedr/.venv/lib/python3.11/site-packages/aiosqlite/core.py\", line 66, in _connection_worker_thread\n      future.get_loop().call_soon_threadsafe(set_result, future, result)\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 807, in call_soon_threadsafe\n      self._check_closed()\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  During handling of the above exception, another exception occurred:\n  \n  Traceback (most recent call last):\n    File \"/usr/lib/python3.11/threading.py\", line 1045, in _bootstrap_inner\n      self.run()\n    File \"/usr/lib/python3.11/threading.py\", line 982, in run\n      self._target(*self._args, **self._kwargs)\n    File \"/home/user/fedr/.venv/lib/python3.11/site-packages/aiosqlite/core.py\", line 75, in _connection_worker_thread\n      future.get_loop().call_soon_threadsafe(set_exception, future, e)\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 807, in call_soon_threadsafe\n      self._check_closed()\n    File \"/usr/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n192 passed, 1 warning in 48.80s\n",
       "details": {
         "passed": 192,
         "failed": 0,
@@ -40,8 +40,8 @@
       "command": "/home/user/fedr/.venv/bin/python -m pytest tests/integration -q -rs -p no:cacheprovider",
       "status": "PASS",
       "reason": "5 check(s) need an external environment (listed below)",
-      "seconds": 78.5,
-      "output_tail": "sssss...........                                                         [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: running compose stack (set FEDR_IT_DOCKER=1 after `docker compose up -d`)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: internet egress to exchange public APIs (set FEDR_IT_NETWORK=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: exchange SANDBOX API keys (FEDR_IT_CCXT_EXCHANGE, FEDR_IT_CCXT_KEY, FEDR_IT_CCXT_SECRET, FEDR_IT_CCXT_SANDBOX=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: a running Hummingbot Gateway (set FEDR_IT_GATEWAY_URL, e.g. http://127.0.0.1:15888)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: testnet RPC + funded test wallet (FEDR_IT_TESTNET=1, FEDR_RPC_SEPOLIA, FEDR_IT_TESTNET_ADDRESS)\n11 passed, 5 skipped in 78.04s (0:01:18)\n",
+      "seconds": 108.5,
+      "output_tail": "sssss...........                                                         [100%]\n=========================== short test summary info ============================\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: running compose stack (set FEDR_IT_DOCKER=1 after `docker compose up -d`)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: internet egress to exchange public APIs (set FEDR_IT_NETWORK=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: exchange SANDBOX API keys (FEDR_IT_CCXT_EXCHANGE, FEDR_IT_CCXT_KEY, FEDR_IT_CCXT_SECRET, FEDR_IT_CCXT_SANDBOX=1)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: a running Hummingbot Gateway (set FEDR_IT_GATEWAY_URL, e.g. http://127.0.0.1:15888)\nSKIPPED [1] tests/integration/conftest.py:28: EXTERNAL ENVIRONMENT REQUIRED: testnet RPC + funded test wallet (FEDR_IT_TESTNET=1, FEDR_RPC_SEPOLIA, FEDR_IT_TESTNET_ADDRESS)\n11 passed, 5 skipped in 107.53s (0:01:47)\n",
       "details": {
         "passed": 11,
         "failed": 0,
@@ -61,7 +61,7 @@
       "command": "/home/user/fedr/.venv/bin/python /home/user/fedr/scripts/secret_scan.py",
       "status": "PASS",
       "reason": "",
-      "seconds": 0.1,
+      "seconds": 0.2,
       "output_tail": "secret scan: OK\n",
       "details": {}
     },
@@ -70,7 +70,7 @@
       "command": "pip-audit --progress-spinner off",
       "status": "PASS",
       "reason": "",
-      "seconds": 0.7,
+      "seconds": 6.3,
       "output_tail": "No known vulnerabilities found\n",
       "details": {}
     },
@@ -79,7 +79,7 @@
       "command": "npx tsc --noEmit",
       "status": "PASS",
       "reason": "",
-      "seconds": 3.5,
+      "seconds": 6.9,
       "output_tail": "",
       "details": {}
     },
@@ -88,8 +88,8 @@
       "command": "npm run build",
       "status": "PASS",
       "reason": "",
-      "seconds": 4.0,
-      "output_tail": "\n> fedr-ui@0.2.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.0 building client environment for production...\ntransforming...\n\u2713 82 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.45 kB \u2502 gzip:   0.29 kB\ndist/assets/index-DAYLI-4v.css   27.21 kB \u2502 gzip:   6.05 kB\ndist/assets/index-DW27N66g.js   377.64 kB \u2502 gzip: 109.31 kB\n\n\u2713 built in 411ms\n",
+      "seconds": 7.5,
+      "output_tail": "\n> fedr-ui@0.2.0 build\n> tsc --noEmit && vite build\n\nvite v8.3.0 building client environment for production...\ntransforming...\n\u2713 82 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.45 kB \u2502 gzip:   0.29 kB\ndist/assets/index-DAYLI-4v.css   27.21 kB \u2502 gzip:   6.05 kB\ndist/assets/index-DW27N66g.js   377.64 kB \u2502 gzip: 109.31 kB\n\n\u2713 built in 931ms\n",
       "details": {}
     },
     {
@@ -97,7 +97,7 @@
       "command": "npm audit --audit-level=high",
       "status": "PASS",
       "reason": "",
-      "seconds": 0.4,
+      "seconds": 0.5,
       "output_tail": "found 0 vulnerabilities\n",
       "details": {}
     },
@@ -106,17 +106,17 @@
       "command": "node compile.js",
       "status": "PASS",
       "reason": "",
-      "seconds": 2.2,
-      "output_tail": "compiled FlashLoanArbitrage with 0.8.28+commit.7893614a.Emscripten.clang: 0 warning(s), bytecode 5227 bytes\n",
+      "seconds": 3.1,
+      "output_tail": "compiled FlashLoanArbitrage with 0.8.28+commit.7893614a.Emscripten.clang: 0 warning(s), bytecode 5224 bytes\n",
       "details": {}
     },
     {
-      "name": "contract static analysis (slither)",
-      "command": "slither .",
-      "status": "SKIPPED",
-      "reason": "slither not installed",
-      "seconds": 0.0,
-      "output_tail": "",
+      "name": "contract static analysis (slither, fails on high-severity findings only)",
+      "command": "set -e; restore() { [ -f .foundry.toml.tmp ] && mv .foundry.toml.tmp foundry.toml || true; }; trap restore EXIT; command -v forge >/dev/null || mv foundry.toml .foundry.toml.tmp; slither src/FlashLoanArbitrage.sol --solc \"$(command -v solc)\" --solc-remaps \"@openzeppelin/=$PWD/node_modules/@openzeppelin/\" --fail-high",
+      "status": "PASS",
+      "reason": "",
+      "seconds": 1.0,
+      "output_tail": "ode_modules/@openzeppelin/contracts/access/Ownable2Step.sol#4)\n\t- ^0.8.20 (node_modules/@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol#4)\n\t- ^0.8.20 (node_modules/@openzeppelin/contracts/utils/Context.sol#4)\n\t- ^0.8.20 (node_modules/@openzeppelin/contracts/utils/Pausable.sol#4)\n\t- ^0.8.20 (node_modules/@openzeppelin/contracts/utils/ReentrancyGuard.sol#4)\nVersion constraint >=0.6.2 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)\n\t- MissingSideEffectsOnSelectorAccess\n\t- AbiReencodingHeadOverflowWithStaticArrayCleanup\n\t- DirtyBytesArrayToStorage\n\t- NestedCalldataArrayAbiReencodingSizeValidation\n\t- ABIDecodeTwoDimensionalArrayMemory\n\t- KeccakCaching\n\t- EmptyByteArrayCopy\n\t- DynamicArrayCleanup\n\t- MissingEscapingInFormatting\n\t- ArraySliceDynamicallyEncodedBaseType\n\t- ImplicitConstructorCallvalueCheck\n\t- TupleAssignmentMultiStackSlotComponents\n\t- MemoryArrayCreationOverflow.\nIt is used by:\n\t- >=0.6.2 (node_modules/@openzeppelin/contracts/interfaces/IERC1363.sol#4)\nVersion constraint >=0.4.16 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)\n\t- DirtyBytesArrayToStorage\n\t- ABIDecodeTwoDimensionalArrayMemory\n\t- KeccakCaching\n\t- EmptyByteArrayCopy\n\t- DynamicArrayCleanup\n\t- ImplicitConstructorCallvalueCheck\n\t- TupleAssignmentMultiStackSlotComponents\n\t- MemoryArrayCreationOverflow\n\t- privateCanBeOverridden\n\t- SignedArrayStorageCopy\n\t- ABIEncoderV2StorageArrayWithMultiSlotElement\n\t- DynamicConstructorArgumentsClippedABIV2\n\t- UninitializedFunctionPointerInConstructor_0.4.x\n\t- IncorrectEventSignatureInLibraries_0.4.x\n\t- ExpExponentCleanup\n\t- NestedArrayFunctionCallDecoder\n\t- ZeroFunctionSelector.\nIt is used by:\n\t- >=0.4.16 (node_modules/@openzeppelin/contracts/interfaces/IERC165.sol#4)\n\t- >=0.4.16 (node_modules/@openzeppelin/contracts/interfaces/IERC20.sol#4)\n\t- >=0.4.16 (node_modules/@openzeppelin/contracts/token/ERC20/IERC20.sol#4)\n\t- >=0.4.16 (node_modules/@openzeppelin/contracts/utils/introspection/IERC165.sol#4)\nReference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity\nINFO:Detectors:\nDetector: naming-convention\nFunction IPool.FLASHLOAN_PREMIUM_TOTAL() (src/FlashLoanArbitrage.sol#13) is not in mixedCase\nVariable FlashLoanArbitrage.POOL (src/FlashLoanArbitrage.sol#69) is not in mixedCase\nReference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions\nINFO:Detectors:\nDetector: unindexed-event-address\nEvent Pausable.Paused(address) (node_modules/@openzeppelin/contracts/utils/Pausable.sol#23) has address parameters but no indexed parameters\nEvent Pausable.Unpaused(address) (node_modules/@openzeppelin/contracts/utils/Pausable.sol#28) has address parameters but no indexed parameters\nReference: https://github.com/crytic/slither/wiki/Detector-Documentation#unindexed-event-address-parameters\nINFO:Slither:src/FlashLoanArbitrage.sol analyzed (13 contracts with 102 detectors), 17 result(s) found\n",
       "details": {}
     },
     {
@@ -178,8 +178,8 @@
       "command": "docker compose up -d --no-deps --no-build app && for i in $(seq 1 45); do sleep 2; test \"$(curl -s -o /dev/null -w %{http_code} -m 3 http://127.0.0.1:8935/health/live)\" = 200 && break; done && curl -fsS http://127.0.0.1:8935/health/live && curl -fsS http://127.0.0.1:8935/health/ready && test \"$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8935/api/trading/state)\" = 401 && docker compose ps",
       "status": "PASS",
       "reason": "gateway service not started (image unavailable here); build not exercised",
-      "seconds": 4.3,
-      "output_tail": "{\"status\":\"ok\"}{\"status\":\"ready\",\"checks\":{\"database\":true,\"profit_guard\":true,\"risk_engine\":true,\"strategy_engine\":true,\"scan_loop\":true,\"gateway\":true,\"not_emergency_stopped\":true},\"mode\":\"simulation\"}NAME       IMAGE             COMMAND                 SERVICE   CREATED         STATUS                            PORTS\nfedr-app   fedr/app:latest   \"python -m fedr.main\"   app       5 seconds ago   Up 4 seconds (health: starting)   127.0.0.1:8935->8935/tcp\n Network fedr_fedr-internal Creating \n Network fedr_fedr-internal Created \n Container fedr-app Creating \n app IPv4 forwarding is disabled. Networking will not work. \n Container fedr-app Created \n Container fedr-app Starting \n Container fedr-app Started \n",
+      "seconds": 24.8,
+      "output_tail": "{\"status\":\"ok\"}{\"status\":\"ready\",\"checks\":{\"database\":true,\"profit_guard\":true,\"risk_engine\":true,\"strategy_engine\":true,\"scan_loop\":true,\"gateway\":true,\"not_emergency_stopped\":true},\"mode\":\"simulation\"}NAME       IMAGE             COMMAND                 SERVICE   CREATED          STATUS                             PORTS\nfedr-app   fedr/app:latest   \"python -m fedr.main\"   app       25 seconds ago   Up 24 seconds (health: starting)   127.0.0.1:8935->8935/tcp\n Network fedr_fedr-internal Creating \n Network fedr_fedr-internal Created \n Container fedr-app Creating \n app IPv4 forwarding is disabled. Networking will not work. \n Container fedr-app Created \n Container fedr-app Starting \n Container fedr-app Started \n",
       "details": {}
     },
     {
@@ -187,7 +187,7 @@
       "command": "/home/user/fedr/.venv/bin/python qa/ui_qa.py --mock",
       "status": "PASS",
       "reason": "",
-      "seconds": 63.1,
+      "seconds": 81.5,
       "output_tail": "counters show 'Market data updates'\n  [PASS] features@400 health: counters show '987,654'\n  [PASS] features@400 health: counters show 'Market data rejections'\n  [PASS] features@400 health: counters show 'Connector errors'\n  [PASS] features@400 health: venue list names venues with health text\n  [PASS] features@400 health: liveness ALIVE + breakers NONE TRIPPED + gas listed\n  [PASS] features@400 wallets: no horizontal overflow\n  [PASS] features@400 wallets: every visible input is labelled\n  [PASS] features@400 wallets: ledgers show 'Deposits'\n  [PASS] features@400 wallets: ledgers show 'Withdrawals'\n  [PASS] features@400 wallets: ledgers show 'CONFIRMED'\n  [PASS] features@400 wallets: ledgers show 'PENDING'\n  [PASS] features@400 wallets: ledgers show 'BROADCAST'\n  [PASS] features@400 wallets: ledgers show 'FAILED'\n  [PASS] features@400 wallets: ledgers show '0xabcdef\u202689abcd'\n  [PASS] features@400 wallets: ledgers show '0x111111\u2026111111'\n  [PASS] features@400 wallets: ledgers show 'insufficient funds for gas'\n  [PASS] features@400 import: invalid JSON rejected client-side\n  [PASS] features@400 import: passphrase cleared after invalid JSON\n  [PASS] features@400 import: API 400 detail shown verbatim\n  [PASS] features@400 import: passphrase field cleared after API error\n  [PASS] features@400 import: restored address shown\n  [PASS] features@400 import: POST body has keystore object, passphrase, label, mode + CSRF header\n  [PASS] features@400 import: Escape closes the dialog\n  [PASS] features@400 withdraw: asset select = native + token registry\n  [PASS] features@400 withdraw: asset select follows the chain (solana)\n  [PASS] features@400 withdraw: new allowlisted address shows 'allowed after <time>'\n  [PASS] features@400 withdraw: quote shows token transfer + fee asset\n  [PASS] features@400 withdraw: unavailable reason shown and submit disabled\n  [PASS] features@400 withdraw: submit enabled once available + acknowledged\n  [PASS] features@400 withdraw: HTTP 409 rendered as duplicate request\n  [PASS] features@400 withdraw: client request_key sent (uuid-like) with confirm + CSRF header\n  [PASS] features@400 wallets (withdraw modal open): no horizontal overflow\n  [PASS] features@400 withdraw: Escape closes the dialog\n  [PASS] features@400 features: no console errors (browser lines for the mocked 400/409 responses excluded)\n  [PASS] estop@400 health: failing readiness check reads 'fail' (text, not colour)\n  [PASS] estop@400 health: NOT READY (HTTP 503) shown\n  [PASS] estop@400 health: no horizontal overflow\n{\n  \"summary\": {\n    \"total\": 656,\n    \"passed\": 656,\n    \"failed\": 0,\n    \"by_width\": {\n      \"1280\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"1024\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"768\": {\n        \"pass\": 164,\n        \"fail\": 0\n      },\n      \"400\": {\n        \"pass\": 164,\n        \"fail\": 0\n      }\n    }\n  },\n  \"unmocked_requests\": [],\n  \"console_errors\": 8,\n  \"report\": \"/home/user/fedr/qa/screenshots/report.json\"\n}\n",
       "details": {}
     }

@@ -33,8 +33,10 @@ The pytest suite deploys the compiled bytecode with mock pool/router/token contr
 and covers: profitable round-trip, `minProfit` revert, cannot-repay revert, min-out and deadline reverts,
 owner-only execution, unlisted router/token rejection, callback only from the configured pool and only for
 this initiator, pause, reentrancy, rescue + two-step ownership, and a gas ceiling. This verifies the
-contract's *logic*; it does not replace static analysis, a fork test against real Aave/Uniswap
-deployments, or an audit.
+contract's *logic*. Static analysis has now been run too — slither 0.11.6 with native solc 0.8.28:
+17 informational/low results, **zero high- or medium-severity findings**, triaged in
+`contracts/SLITHER_REPORT.md`. It does not replace a fork test against real Aave/Uniswap deployments or
+an audit.
 
 ## Fork tests (Foundry, optional)
 
@@ -68,6 +70,6 @@ on Ethereum/Arbitrum/Optimism/Polygon, `0x2626664c2603336E57B271c5C0b26F421741e4
 
 Classification (see `docs/PRODUCTION_VERIFICATION_MATRIX.md`, row ST-05): **IMPLEMENTED + PARTIALLY VERIFIED**.
 Compiles with solc 0.8.28; 12 EVM tests pass on eth-tester. **Not audited. Not deployed. Not exercised on a fork
-(no RPC access) and not statically analysed (slither/foundry binaries unreachable in the build environment).**
+(no RPC access). Statically analysed: slither 0.11.6, zero high/medium findings (`SLITHER_REPORT.md`).**
 Mainnet use is MUST BLOCK until a fork test suite and an independent audit exist. Tests passing does not make
 the contract safe; treat any deployment as at-risk capital.

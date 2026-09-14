@@ -685,7 +685,7 @@ def run_mock(args) -> int:
 
 
 # --------------------------------------------------------------------------- live-backend mode (original behaviour)
-PAGES = [("dashboard", "/"), ("opportunities", "/opportunities"), ("trading", "/trading"), ("wallets", "/wallets"), ("exchanges", "/exchanges"), ("history", "/history"), ("health", "/health"), ("settings", "/settings")]
+PAGES = [("dashboard", "/"), ("opportunities", "/opportunities"), ("trading", "/trading"), ("wallets", "/wallets"), ("exchanges", "/exchanges"), ("history", "/history"), ("health", "/status"), ("settings", "/settings")]
 EXPECT = {
     "dashboard": ["Capital", "P&L", "Opportunit", "Gross", "Expected", "Worst"],
     "opportunities": ["Gross", "Expected", "Worst", "Required"],
@@ -704,12 +704,19 @@ def run_live(args) -> int:
     base = args.base_url.rstrip("/")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    token = args.token or os.environ.get("FEDR_AUTH_TOKEN") or ""
     rep = Report(out)
+    from urllib.parse import urlparse
+
+    host = urlparse(base).hostname or "127.0.0.1"
     with sync_playwright() as p:
         exe = chromium_path()
         browser = p.chromium.launch(executable_path=exe) if exe else p.chromium.launch()
         for w, h in WIDTHS:
             ctx = browser.new_context(viewport={"width": w, "height": h}, device_scale_factor=1)
+            if token:
+                # authenticate exactly like the login flow's outcome: the HttpOnly session cookie
+                ctx.add_cookies([{"name": "fedr_session", "value": token, "domain": host, "path": "/"}])
             page = ctx.new_page()
             errs: list[str] = []
             page.on("console", lambda m: errs.append(m.text[:300]) if m.type == "error" else None)
@@ -742,6 +749,7 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "qa" / "screenshots"), help="screenshots + report.json directory")
     ap.add_argument("--mock", action="store_true", help="serve the built UI statically and mock every API/health call")
     ap.add_argument("--dist", default=None, help="built UI directory (default frontend/dist, else backend/fedr/static)")
+    ap.add_argument("--token", default=None, help="API token for live-backend mode (default: $FEDR_AUTH_TOKEN); sets the session cookie")
     args = ap.parse_args()
     return run_mock(args) if args.mock else run_live(args)
 

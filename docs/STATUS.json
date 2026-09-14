@@ -1,12 +1,12 @@
 {
   "name": "FEDR",
   "version": "0.2.0",
-  "commit": "fb74a78",
+  "commit": "d49b77e",
   "generated": "2026-09-14",
   "port": 8935,
   "build_status": "GREEN (lint, 192 unit/adversarial + 11 process-level integration tests, tsc, vite, solc all pass - docs/PRODUCTION_VERIFICATION_REPORT.md)",
   "docker_status": "ORANGE (RT-02: BLOCKED BY EXTERNAL DEPENDENCY; RT-03: IMPLEMENTED + PARTIALLY VERIFIED; RT-04: IMPLEMENTED + PARTIALLY VERIFIED; RT-07: IMPLEMENTED + VERIFIED)",
-  "ui_status": "YELLOW (UI-04: IMPLEMENTED + VERIFIED; UI-05: IMPLEMENTED + VERIFIED; UI-08: IMPLEMENTED + PARTIALLY VERIFIED)",
+  "ui_status": "GREEN (UI-04: IMPLEMENTED + VERIFIED; UI-05: IMPLEMENTED + VERIFIED; UI-08: IMPLEMENTED + VERIFIED)",
   "database_status": "GREEN (RT-14: IMPLEMENTED + VERIFIED)",
   "market_data_status": "ORANGE (MD-01: IMPLEMENTED + VERIFIED; MD-02: IMPLEMENTED + VERIFIED; MD-03: BLOCKED BY EXTERNAL DEPENDENCY)",
   "wallet_status": "YELLOW (WL-01: IMPLEMENTED + VERIFIED; WL-02: IMPLEMENTED + VERIFIED; WL-04: IMPLEMENTED + PARTIALLY VERIFIED)",
@@ -36,16 +36,16 @@
     "RED": "missing/broken/unsafe"
   },
   "counts": {
-    "IMPLEMENTED + VERIFIED": 49,
+    "IMPLEMENTED + VERIFIED": 51,
     "BLOCKED BY EXTERNAL DEPENDENCY": 8,
-    "IMPLEMENTED + PARTIALLY VERIFIED": 14,
+    "IMPLEMENTED + PARTIALLY VERIFIED": 12,
     "IMPLEMENTED + UNVERIFIED": 1,
     "MUST BLOCK": 1
   },
   "color_counts": {
-    "GREEN": 49,
+    "GREEN": 51,
     "ORANGE": 9,
-    "YELLOW": 15
+    "YELLOW": 13
   },
   "critical_open": [
     "RT-02",

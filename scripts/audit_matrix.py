@@ -124,10 +124,10 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
     (
         "RT-08",
         "runtime",
-        "Clean-checkout build (no dependency on untracked files)",
-        PV,
-        ".dockerignore excludes data/, node_modules/, dist/, .env*, backend/fedr/static; the image builds the UI itself. scripts/secret_scan.py confirms no .env / keystores are tracked.",
-        "A `git clone` into an empty directory followed by `docker compose build` was not executed here (registry blocked).",
+        "Clean-checkout build (no dependency on untracked files or developer-local state)",
+        V,
+        "Tracked files only copied to a fresh directory; documented setup executed end-to-end: fresh venv + `pip install -e backend[dev]`, frontend `npm ci` + vite build, contracts `npm ci` + solc compile, 192/192 unit + 11 process-level integration tests, app booted and served /health/ready + the UI (2026-09-14). Caught and fixed a real gap: eth-tester/py-evm were missing from the dev extras.",
+        "`docker compose build` from a clean clone with the official base images still needs a host with registry access (RT-02).",
         False,
     ),
     (
@@ -510,7 +510,7 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
         "Flash-loan contract: compiles (solc 0.8.28, OpenZeppelin 5.4.0), EVM tests (profit, min-profit revert, cannot-repay, min-out, deadline, non-owner, unlisted router/token, callback-only-pool + foreign initiator, pause, reentrancy, rescue, 2-step ownership, gas)",
         PV,
         "contracts/compile.js; tests/test_contract_evm.py (12 tests on eth-tester with real bytecode); engine aborts before broadcast unless the local EVM simulation and Profit Guard pass (tests/test_execution.py).",
-        "NOT audited; slither (static analysis) and foundry fork tests could not be run (binaries unreachable). Mainnet use is MUST BLOCK until an audit + fork tests exist.",
+        "NOT audited; slither 0.11.6 static analysis NOW RUN (native solc 0.8.28 via GitHub releases): zero high/medium findings, 17 informational triaged in contracts/SLITHER_REPORT.md, one cosmetic fix applied + retested. Foundry fork tests still not run (no RPC). Mainnet use is MUST BLOCK until an audit + fork tests exist.",
         True,
     ),
     (
@@ -699,9 +699,9 @@ ROWS: list[tuple[str, str, str, str, str, str, bool]] = [
         "UI-08",
         "ui",
         "UI QA against a running backend (not mocks)",
-        PV,
-        "Phase-1 QA ran against a live simulation backend (docs/RELEASE_REPORT.md); the phase-2 danger-state suite ran in mock mode only.",
-        "Re-run `python qa/ui_qa.py http://127.0.0.1:8935` on the target host after login support is added to the script.",
+        V,
+        "qa/ui_qa.py in live-backend mode (token-cookie auth added) against a real simulation-mode process on this host: 192 checks / 0 failures / 0 console errors at 1280/1024/768/400 across all 8 pages (2026-09-14). Mock-mode danger-state suite: 656/656.",
+        "Run against the Docker deployment on the target host for the final sign-off (runbook step 3).",
         False,
     ),
     # ------------------------------------------------------------------ docs
@@ -780,7 +780,7 @@ def main() -> int:
             "docker_registry": False,
             "docker_daemon": "local overlay2 daemon started in the sandbox (no iptables, no bridge); base images imported from the host rootfs",
             "gateway_image": False,
-            "foundry_slither": False,
+            "foundry_slither": "slither 0.11.6 + native solc 0.8.28 installed this session (PyPI + GitHub releases reachable); foundry still absent",
         },
         "breaker_reasons": {
             "total": len(BREAKER_REASONS),

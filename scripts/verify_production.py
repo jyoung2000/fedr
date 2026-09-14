@@ -262,10 +262,18 @@ def main() -> int:
     )
     steps.append(
         step(
-            "contract static analysis (slither)",
-            "slither .",
+            "contract static analysis (slither, fails on high-severity findings only)",
+            # foundry.toml makes crytic-compile insist on forge even with --compile-force-framework;
+            # move it aside for the run when forge is absent. Needs a native solc on PATH
+            # (e.g. solc-static-linux 0.8.28 from github.com/ethereum/solidity/releases).
+            'set -e; restore() { [ -f .foundry.toml.tmp ] && mv .foundry.toml.tmp foundry.toml || true; }; '
+            "trap restore EXIT; command -v forge >/dev/null || mv foundry.toml .foundry.toml.tmp; "
+            'slither src/FlashLoanArbitrage.sol --solc "$(command -v solc)" '
+            '--solc-remaps "@openzeppelin/=$PWD/node_modules/@openzeppelin/" --fail-high',
             CONTRACTS,
-            skip=None if shutil.which("slither") else "slither not installed",
+            skip=None
+            if shutil.which("slither") and shutil.which("solc")
+            else "slither + native solc not installed (pip install slither-analyzer; solc-static-linux on PATH)",
             timeout=900,
         )
     )
