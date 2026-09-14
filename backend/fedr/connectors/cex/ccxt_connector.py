@@ -58,7 +58,7 @@ from fedr.core.models import (
     OrderResult,
     now_ms,
 )
-from fedr.core.money import ZERO, D, floor_to_step
+from fedr.core.money import ZERO, D, ceil_to_step, floor_to_step
 from fedr.marketdata.orderbook import OrderBook
 
 log = get_logger("cex")
@@ -367,7 +367,7 @@ class CcxtConnector(VenueConnector):
         self.health_tracker.last_balance_ms = now_ms()
         return out
 
-    def _quantize(self, symbol: str, amount: Decimal, price: Decimal | None) -> tuple[Decimal, Decimal | None]:
+    def _quantize(self, symbol: str, amount: Decimal, price: Decimal | None, side: OrderSide = OrderSide.BUY) -> tuple[Decimal, Decimal | None]:
         m = self.markets.get(symbol)
         if m is None:
             return amount, price
@@ -375,7 +375,8 @@ class CcxtConnector(VenueConnector):
         if amt < m.min_amount:
             raise OrderRejected(f"amount {amt} below minimum {m.min_amount} on {self.name}")
         if price is not None:
-            price = D(self.exchange.price_to_precision(symbol, float(price)))
+            # conservative rounding: a buy limit rounds down, a sell limit rounds up (never loosens the limit)
+            price = floor_to_step(price, m.price_step) if side is OrderSide.BUY else ceil_to_step(price, m.price_step)
         if price is not None and m.min_cost and amt * price < m.min_cost:
             raise OrderRejected(f"order cost {amt * price} below minimum {m.min_cost} on {self.name}")
         return amt, price
@@ -383,7 +384,7 @@ class CcxtConnector(VenueConnector):
     async def place_order(self, req: OrderRequest) -> OrderResult:
         if not self.credentials:
             raise ConnectorError(f"{self.name}: no credentials - cannot place orders")
-        amount, price = self._quantize(req.symbol, req.amount, req.limit_price)
+        amount, price = self._quantize(req.symbol, req.amount, req.limit_price, req.side)
         params: dict[str, Any] = {"clientOrderId": req.client_order_id}
         if price is None:
             raise OrderRejected("market orders without a limit price are not allowed (use IOC limit)")
@@ -525,9 +526,10 @@ class CcxtConnector(VenueConnector):
         # fall back to the schedule estimate and flag it so reconciliation can revisit.
         result.raw["fee_asset_unconverted"] = asset
         fee = self._fee_cache.get(result.request.symbol)
-        if fee and fee.taker_pct is not None:
-            return result.quote_amount * fee.taker_pct / 100
-        return ZERO
+        rate = fee.taker_pct if (fee and fee.taker_pct is not None) else m.taker_fee_pct
+        if rate is None and self.spec is not None:
+            rate = self.spec.fallback_taker_pct
+        return result.quote_amount * rate / 100 if rate is not None else ZERO
 
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         try:

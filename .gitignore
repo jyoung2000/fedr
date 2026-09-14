@@ -33,3 +33,7 @@ contracts/lib/
 *.log
 playwright-report/
 test-results/
+
+# QA artefacts
+qa/screenshots/
+frontend/qa/

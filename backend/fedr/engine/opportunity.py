@@ -81,6 +81,13 @@ class OpportunityEngine:
         inv = ctx.inventory
         total = inv.total_usd()
         cap = ctx.risk_engine.capital_breakdown(total, self._gas_reserve_usd(), ZERO)
+        balances = inv.balances_map()
+        # DEX venues share their chain wallet: expose the chain balances under the venue name too
+        for c in ctx.connectors.values():
+            if c.kind is VenueKind.DEX and c.chain is not None:
+                for (venue, asset), amount in list(balances.items()):
+                    if venue == c.chain.value:
+                        balances[(c.name, asset)] = amount
         return PortfolioState(
             total_capital_usd=total,
             usable_capital_usd=cap["usable"],
@@ -91,7 +98,7 @@ class OpportunityEngine:
             daily_realized_pnl_usd=ctx.daily_pnl_usd,
             failed_trades_last_hour=ctx.failed_trades_last_hour,
             venue_health={n: ctx.venue_health(n) for n in ctx.connectors},
-            available_balances=inv.balances_map(),
+            available_balances=balances,
             unhedged_seconds=int((now_ms() - ctx.unhedged_since_ms) / 1000) if ctx.unhedged_since_ms else 0,
             active_breakers=[],
             gas_reserve_ok={c.value: ok for c in Chain if (ok := ctx.gas_reserve_ok(c)) is not None},

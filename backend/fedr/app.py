@@ -330,6 +330,7 @@ class FedrApp:
                         await self.flashloan.execute(o, self.opportunities, trigger="auto")
                     else:
                         await self.executor.execute(o, trigger="auto")
+                    break  # one execution per scan: the next tick re-evaluates everything with fresh quotes
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

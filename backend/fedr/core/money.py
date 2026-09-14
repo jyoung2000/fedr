@@ -1,7 +1,7 @@
 """Decimal helpers. All engine arithmetic uses Decimal - never float."""
 from __future__ import annotations
 
-from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, InvalidOperation, getcontext
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_EVEN, Decimal, InvalidOperation, getcontext
 from typing import Any
 
 getcontext().prec = 34
@@ -59,6 +59,13 @@ def floor_to_step(value: Decimal, step: Decimal) -> Decimal:
     if step <= 0:
         return value
     return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def ceil_to_step(value: Decimal, step: Decimal) -> Decimal:
+    """Round *up* to a step size (conservative for sell limit prices)."""
+    if step <= 0:
+        return value
+    return (value / step).to_integral_value(rounding=ROUND_CEILING) * step
 
 
 def clamp(value: Decimal, lo: Decimal, hi: Decimal) -> Decimal:

@@ -79,10 +79,21 @@ class EngineContext:
         return LatencyGuard(min(self.settings.trading.max_quote_age_ms, self.settings.risk.max_quote_age_ms))
 
     def venue_health(self, name: str) -> VenueHealth:
-        rep = self.health.get(name)
-        if rep is None:
-            c = self.connectors.get(name)
-            return VenueHealth.UNKNOWN if c is None or not c.connected else VenueHealth.HEALTHY
+        """Live classification from the connector's rolling statistics (no I/O).
+
+        The periodic health loop performs the active checks (API pings, maintenance flags) that feed
+        the tracker; this method reflects the latest market-data/latency/error state at decision time.
+        """
+        c = self.connectors.get(name)
+        if c is None or not c.connected:
+            return VenueHealth.UNKNOWN
+        rep = c.health_tracker.classify(name, market_data_max_age_ms=60_000 if c.kind is VenueKind.DEX else 15_000, expect_ws="ws" in c.capabilities)
+        prev = self.health.get(name)
+        if prev is not None and prev.maintenance:
+            rep.maintenance = True
+            rep.health = VenueHealth.BLOCKED
+            rep.reasons.append("exchange maintenance")
+        self.health[name] = rep
         return rep.health
 
     def price_usd(self, asset: str) -> Decimal | None:
