@@ -167,4 +167,6 @@ def trade_row_from_db(row) -> dict:
         "explanation": row.explanation,
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "started_at_ms": int(row.started_at.timestamp() * 1000) if row.started_at else None,
+        "completed_at_ms": int(row.completed_at.timestamp() * 1000) if row.completed_at else None,
     }

@@ -64,7 +64,8 @@ async def state(app=Depends(require_app)):
         "shadow_mode": s.general.shadow_mode,
         "emergency_stop": ctx.emergency_stop,
         "active": [trade_detail(t) for t in app.executor.active.values()],
-        "recent": [trade_summary(t) for t in reversed(app.executor.recent[-30:])] or [trade_row_from_db(r) for r in await app.repo.list_trades(app.mode, limit=30)],
+        "recent": [trade_summary(t) for t in reversed(app.executor.recent[-30:])]
+        or [trade_row_from_db(r) for r in await app.repo.list_trades(app.mode, limit=30)],
         "shadow": {**(await app.repo.shadow_summary()), **app.shadow.stats},
         "rebalance": [
             {

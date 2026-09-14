@@ -113,6 +113,9 @@ export function useSnapshot(enabled = true): { snapshot: Snapshot | null; connec
     if (!enabled) return;
     const off = sse.on("snapshot", (d) => setSnapshot(d as Snapshot));
     const offStatus = sse.onStatus(setConnected);
+    // the stream may already be open (another subscriber opened it earlier): sync the current state
+    setConnected(sse.connected);
+    if (sse.lastSnapshot) setSnapshot(sse.lastSnapshot);
     return () => {
       off();
       offStatus();

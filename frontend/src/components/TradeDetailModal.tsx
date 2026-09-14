@@ -62,7 +62,7 @@ export function TradeDetailModal({ trade, onClose }: { trade: AnyTrade | null; o
           </div>
           <div className="stat">
             <span className="label">Realized net</span>
-            {real === null ? <span className="value muted">pending</span> : <Money value={trade.actual_net} className="value" />}
+            {real === null ? <span className="value muted">{["aborted", "failed", "cancelled"].includes(trade.status) ? "— (nothing executed)" : "pending"}</span> : <Money value={trade.actual_net} className="value" />}
           </div>
           <div className="stat">
             <span className="label">Difference</span>
@@ -70,7 +70,7 @@ export function TradeDetailModal({ trade, onClose }: { trade: AnyTrade | null; o
           </div>
         </div>
         <p className="small muted">
-          Estimated {fmtMoney(trade.estimated_net)} / Realized {real === null ? "pending" : fmtMoney(trade.actual_net)} / Difference {diff === null ? "—" : fmtMoney(diff)} · worst case modelled {fmtMoney(trade.estimated_worst_case)}
+          Estimated {fmtMoney(trade.estimated_net)} / Realized {real === null ? (["aborted", "failed", "cancelled"].includes(trade.status) ? "—" : "pending") : fmtMoney(trade.actual_net)} / Difference {diff === null ? "—" : fmtMoney(diff)} · worst case modelled {fmtMoney(trade.estimated_worst_case)}
         </p>
 
         <div className="table-wrap">

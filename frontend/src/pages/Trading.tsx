@@ -75,7 +75,7 @@ export function Trading() {
     { key: "route", header: "Route", render: (t: TradeSummary) => <span className="mono small">{t.route}</span> },
     { key: "size", header: "Size", render: (t: TradeSummary) => <span className="mono">{fmtAmount(t.size_base)}</span>, align: "right" as const },
     { key: "est", header: "Estimated net", render: (t: TradeSummary) => <Money value={t.estimated_net} />, align: "right" as const },
-    { key: "real", header: "Realized net", render: (t: TradeSummary) => (t.actual_net === null ? <span className="muted">pending</span> : <Money value={t.actual_net} />), align: "right" as const },
+    { key: "real", header: "Realized net", render: (t: TradeSummary) => (t.actual_net === null ? <span className="muted">{["aborted", "failed", "cancelled"].includes(t.status) ? "—" : "pending"}</span> : <Money value={t.actual_net} />), align: "right" as const },
     { key: "diff", header: "Difference", render: (t: TradeSummary) => (t.actual_net === null || t.estimated_net === null ? <span className="muted">—</span> : <Money value={(num(t.actual_net) ?? 0) - (num(t.estimated_net) ?? 0)} />), align: "right" as const },
     { key: "status", header: "Status", render: (t: TradeSummary) => <StatusPill tone={tradeTone(t.status)}>{t.status.toUpperCase()}</StatusPill> },
   ];

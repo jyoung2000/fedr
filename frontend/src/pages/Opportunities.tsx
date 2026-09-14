@@ -84,7 +84,7 @@ export function Opportunities() {
         ) : (
           <div style={{ margin: "-14px -16px" }}>
             {filtered.map((o) => (
-              <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
+              <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`, { state: { route: { strategy: x.strategy, pair: x.pair, buy_venue: x.buy_venue, sell_venue: x.sell_venue } } })} />
             ))}
           </div>
         )}

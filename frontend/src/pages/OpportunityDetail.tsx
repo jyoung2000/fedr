@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Banner } from "../components/Banner";
 import { Card } from "../components/Card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -91,9 +91,24 @@ function normalize(raw: Record<string, unknown>): Detail {
 
 const COST_ORDER = ["buy_trading_fee", "sell_trading_fee", "maker_taker_adjustment", "dex_swap_fee", "lp_fee", "gas", "priority_fee", "slippage", "price_impact", "bridge_fee", "withdrawal_fee", "deposit_fee", "funding", "rebalance_allowance", "latency_allowance", "partial_fill_allowance", "failure_reserve", "safety_buffer", "flash_loan_fee", "mev_reserve", "total"];
 
+interface RouteHint {
+  strategy: string;
+  pair: string;
+  buy_venue: string;
+  sell_venue: string;
+}
+
+async function latestForRoute(hint: RouteHint): Promise<OpportunitySummary | undefined> {
+  const r = await api.get<{ items: OpportunitySummary[] }>("/api/opportunities?limit=200");
+  return r.items.find((o) => o.pair === hint.pair && o.strategy === hint.strategy && o.buy_venue === hint.buy_venue && o.sell_venue === hint.sell_venue);
+}
+
 export function OpportunityDetail() {
   const { id = "" } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
+  const hint = (location.state as { route?: RouteHint } | null)?.route;
+  const resolved = useRef(false);
   const toast = useToast();
   const { status } = useAppState();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -114,10 +129,23 @@ export function OpportunityDetail() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         stopped.current = true;
+        // Opportunities expire within a few seconds: if we know the route, jump to its latest evaluation once.
+        if (hint && !resolved.current) {
+          resolved.current = true;
+          try {
+            const m = await latestForRoute(hint);
+            if (m && m.id !== id) {
+              nav(`/opportunities/${m.id}`, { replace: true, state: { route: hint } });
+              return;
+            }
+          } catch {
+            /* fall through to the expired state */
+          }
+        }
         setGone(true);
       } else setError(errorMessage(err));
     }
-  }, [id]);
+  }, [id, hint, nav]);
 
   useEffect(() => {
     stopped.current = false;
@@ -134,9 +162,8 @@ export function OpportunityDetail() {
     if (!detail) return;
     setFinding(true);
     try {
-      const r = await api.get<{ items: OpportunitySummary[] }>("/api/opportunities?limit=200");
-      const m = r.items.find((o) => o.pair === detail.pair && o.strategy === detail.strategy && o.buy_venue === detail.buy_venue && o.sell_venue === detail.sell_venue);
-      if (m) nav(`/opportunities/${m.id}`, { replace: true });
+      const m = await latestForRoute(detail);
+      if (m) nav(`/opportunities/${m.id}`, { replace: true, state: { route: { strategy: detail.strategy, pair: detail.pair, buy_venue: detail.buy_venue, sell_venue: detail.sell_venue } } });
       else toast.info("This route was not evaluated in the latest scan.");
     } catch (err) {
       toast.error(errorMessage(err));

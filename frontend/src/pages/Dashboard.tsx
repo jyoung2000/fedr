@@ -45,7 +45,7 @@ export function Dashboard() {
     { key: "pair", header: "Pair", render: (t: TradeSummary) => <strong>{t.pair}</strong> },
     { key: "route", header: "Route", render: (t: TradeSummary) => <span className="mono small">{t.route}</span> },
     { key: "est", header: "Estimated", render: (t: TradeSummary) => <Money value={t.estimated_net} />, align: "right" as const },
-    { key: "real", header: "Realized", render: (t: TradeSummary) => (t.actual_net === null ? <span className="muted">pending</span> : <Money value={t.actual_net} />), align: "right" as const },
+    { key: "real", header: "Realized", render: (t: TradeSummary) => (t.actual_net === null ? <span className="muted">{["aborted", "failed", "cancelled"].includes(t.status) ? "—" : "pending"}</span> : <Money value={t.actual_net} />), align: "right" as const },
     { key: "status", header: "Status", render: (t: TradeSummary) => <StatusPill tone={tradeTone(t.status)}>{t.status.toUpperCase()}</StatusPill> },
   ];
 
@@ -135,7 +135,7 @@ export function Dashboard() {
               ) : null}
               <div style={{ margin: "0 -16px -14px" }}>
                 {best.map((o) => (
-                  <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`)} />
+                  <OpportunityRow key={routeKey(o)} o={o} onOpen={(x) => nav(`/opportunities/${x.id}`, { state: { route: { strategy: x.strategy, pair: x.pair, buy_venue: x.buy_venue, sell_venue: x.sell_venue } } })} />
                 ))}
               </div>
             </>

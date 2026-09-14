@@ -73,6 +73,7 @@ async def list_exchanges(app=Depends(require_app)):
                 else None,
                 "permissions": getattr(c, "permissions", None) if c else None,
                 "in_use": c is not None,
+                "simulated": c is not None and "synthetic" in c.capabilities,
             }
         )
     dex = []
@@ -95,6 +96,7 @@ async def list_exchanges(app=Depends(require_app)):
                 "health": ctx.venue_health(spec.id).value if c else "unknown",
                 "health_reasons": h.reasons if h else [],
                 "in_use": c is not None,
+                "simulated": c is not None and "synthetic" in c.capabilities,
                 "last_error": c.last_error if c else None,
             }
         )

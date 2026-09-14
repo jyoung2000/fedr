@@ -31,8 +31,9 @@ async def pnl(app=Depends(require_app), mode: str | None = None):
 
 
 @router.get("/history/opportunities")
-async def opportunities(app=Depends(require_app), limit: int = 100):
-    rows = await app.repo.list_opportunities(app.mode, limit=limit)
+async def opportunities(app=Depends(require_app), limit: int = 100, mode: str | None = None):
+    m = TradingMode(mode) if mode else app.mode
+    rows = await app.repo.list_opportunities(m, limit=limit)
     return {
         "items": [
             {
@@ -74,8 +75,9 @@ async def audit(app=Depends(require_app), limit: int = 100, event_type: str | No
 
 
 @router.get("/history/risk-events")
-async def risk_events(app=Depends(require_app), limit: int = 50):
-    rows = await app.repo.list_risk_events(app.mode, limit=limit)
+async def risk_events(app=Depends(require_app), limit: int = 50, mode: str | None = None):
+    m = TradingMode(mode) if mode else app.mode
+    rows = await app.repo.list_risk_events(m, limit=limit)
     return {
         "items": [
             {
