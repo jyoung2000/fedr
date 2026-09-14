@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import time
 from decimal import Decimal
-from typing import Awaitable, Callable
+from typing import Callable
 
 from fedr.connectors.base import (
     ConnectorError,

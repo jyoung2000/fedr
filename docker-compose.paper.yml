@@ -1,0 +1,8 @@
+# Paper trading overlay (real market data, simulated balances/execution). This is the default mode;
+# the overlay only pins it explicitly and keeps the Gateway wallet-less.
+#   docker compose -f docker-compose.yml -f docker-compose.paper.yml up -d
+services:
+  app:
+    environment:
+      FEDR_DEFAULT_MODE: paper
+      FEDR_LIVE_TRADING_ALLOWED: "false"

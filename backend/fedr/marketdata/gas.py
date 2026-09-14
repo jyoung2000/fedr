@@ -8,7 +8,6 @@ from fedr.connectors.dex.gateway_client import GatewayClient, GatewayError
 from fedr.connectors.dex.registry import CHAIN_NETWORKS, gateway_chain_for
 from fedr.core.enums import Chain
 from fedr.core.logging import get_logger
-from fedr.core.models import now_ms
 from fedr.core.money import D
 from fedr.engine.gas_guard import GasBaseline, GasSnapshot
 

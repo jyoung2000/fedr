@@ -74,8 +74,9 @@ class SyntheticMarket:
             if v.dislocation_ttl > 0:
                 v.dislocation_ttl -= 1
             elif self.rng.random() < v.dislocation_prob:
+                # temporary venue-specific dislocation of random magnitude (0.6x .. 2.2x the profile size)
                 v.dislocation_ttl = self.rng.randint(2, 6)
-                v.state_offset += self.rng.choice([-1, 1]) * v.dislocation_bps
+                v.state_offset += self.rng.choice([-1, 1]) * v.dislocation_bps * self.rng.uniform(0.6, 2.2)
         for c in self.chains.values():
             if c.spike_ttl > 0:
                 c.spike_ttl -= 1
@@ -143,17 +144,26 @@ class SyntheticMarket:
 
 def default_synthetic(pairs: list[str], seed: int = 42) -> SyntheticMarket:
     venues = [
-        VenueProfile("kraken", "cex", offset_bps=-2.0, spread_bps=5.0, depth_scale=1.2, dislocation_prob=0.04, dislocation_bps=30),
-        VenueProfile("coinbase", "cex", offset_bps=3.0, spread_bps=4.0, depth_scale=1.5, dislocation_prob=0.04, dislocation_bps=30),
-        VenueProfile("binance", "cex", offset_bps=0.0, spread_bps=2.0, depth_scale=3.0, dislocation_prob=0.02, dislocation_bps=20),
-        VenueProfile("jupiter", "dex", offset_bps=6.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.06, dislocation_bps=45, chain=Chain.SOLANA, pool_fee_pct=Decimal("0.25"), pool_liquidity_usd=3_000_000),
-        VenueProfile("uniswap-base", "dex", offset_bps=-4.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.06, dislocation_bps=45, chain=Chain.BASE, pool_fee_pct=Decimal("0.30"), pool_liquidity_usd=1_500_000),
-        VenueProfile("uniswap-arbitrum", "dex", offset_bps=2.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.05, dislocation_bps=40, chain=Chain.ARBITRUM, pool_fee_pct=Decimal("0.05"), pool_liquidity_usd=2_500_000),
+        VenueProfile("kraken", "cex", offset_bps=-2.0, spread_bps=5.0, depth_scale=1.2, dislocation_prob=0.05, dislocation_bps=70),
+        VenueProfile("coinbase", "cex", offset_bps=3.0, spread_bps=4.0, depth_scale=1.5, dislocation_prob=0.05, dislocation_bps=70),
+        VenueProfile("binance", "cex", offset_bps=0.0, spread_bps=2.0, depth_scale=3.0, dislocation_prob=0.03, dislocation_bps=45),
+        VenueProfile("jupiter", "dex", offset_bps=6.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.07, dislocation_bps=110, chain=Chain.SOLANA, pool_fee_pct=Decimal("0.25"), pool_liquidity_usd=3_000_000),
+        VenueProfile("uniswap-base", "dex", offset_bps=-4.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.07, dislocation_bps=110, chain=Chain.BASE, pool_fee_pct=Decimal("0.30"), pool_liquidity_usd=1_500_000),
+        VenueProfile("uniswap-arbitrum", "dex", offset_bps=2.0, spread_bps=0.0, vol_bps=6.0, dislocation_prob=0.06, dislocation_bps=100, chain=Chain.ARBITRUM, pool_fee_pct=Decimal("0.05"), pool_liquidity_usd=2_500_000),
     ]
     chains = [
-        ChainProfile(Chain.SOLANA, base_gas=0.2, priority=0.2, native_usd=BASE_PRICES["SOL"]),  # lamports per CU
-        ChainProfile(Chain.BASE, base_gas=0.05, priority=0.001, native_usd=BASE_PRICES["ETH"]),  # gwei
-        ChainProfile(Chain.ARBITRUM, base_gas=0.1, priority=0.001, native_usd=BASE_PRICES["ETH"]),
+        ChainProfile(Chain.SOLANA, base_gas=0.05, priority=0.05, native_usd=BASE_PRICES["SOL"]),  # lamports per CU
+        ChainProfile(Chain.BASE, base_gas=0.01, priority=0.001, native_usd=BASE_PRICES["ETH"]),  # gwei
+        ChainProfile(Chain.ARBITRUM, base_gas=0.02, priority=0.001, native_usd=BASE_PRICES["ETH"]),
         ChainProfile(Chain.ETHEREUM, base_gas=12.0, priority=1.0, native_usd=BASE_PRICES["ETH"], spike_prob=0.04),
     ]
     return SyntheticMarket(pairs, venues, chains, seed=seed)
+
+
+DEX_NATIVE_BASES = {Chain.SOLANA: {"SOL"}, Chain.BASE: {"ETH"}, Chain.ARBITRUM: {"ETH"}, Chain.ETHEREUM: {"ETH", "BTC"}, Chain.OPTIMISM: {"ETH"}, Chain.POLYGON: {"ETH", "POL"}, Chain.BSC: {"BNB", "ETH"}, Chain.AVALANCHE: {"AVAX", "ETH"}}
+
+
+def dex_pairs_for(chain: Chain, pairs: list[str]) -> list[str]:
+    """Pairs a simulated DEX on this chain lists (base must be native to the chain's ecosystem)."""
+    bases = DEX_NATIVE_BASES.get(chain, set())
+    return [p for p in pairs if p.split("/")[0] in bases]

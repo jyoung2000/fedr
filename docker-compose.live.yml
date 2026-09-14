@@ -1,0 +1,10 @@
+# Live overlay. Setting FEDR_LIVE_TRADING_ALLOWED=true does NOT start live trading by itself -
+# the UI readiness checklist and explicit activation phrase are still required.
+#   docker compose -f docker-compose.yml -f docker-compose.live.yml up -d
+services:
+  app:
+    environment:
+      FEDR_DEFAULT_MODE: paper
+      FEDR_LIVE_TRADING_ALLOWED: "true"
+      FEDR_AUTH_TOKEN: ${FEDR_AUTH_TOKEN:?FEDR_AUTH_TOKEN is required for live deployments}
+      FEDR_EVM_PRIVATE_RPC: ${FEDR_EVM_PRIVATE_RPC:-}

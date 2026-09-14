@@ -54,7 +54,7 @@ class RiskEngine:
         score = 0
 
         # --- hard limits ----------------------------------------------------------------
-        if notional_usd > t.max_trade_size_usd:
+        if flash_loan_usd is None and notional_usd > t.max_trade_size_usd:
             reasons.append(f"trade size {fmt_money(notional_usd)} exceeds max {fmt_money(t.max_trade_size_usd)}")
         if notional_usd < t.min_trade_size_usd:
             reasons.append(f"trade size {fmt_money(notional_usd)} below minimum {fmt_money(t.min_trade_size_usd)}")
@@ -97,9 +97,12 @@ class RiskEngine:
                     exp = portfolio.exposure_by_chain_usd.get(leg.chain.value, ZERO) + notional_usd
                     if pct(exp, total) > r.max_chain_exposure_pct:
                         reasons.append(f"exposure on chain {leg.chain.value} would exceed {r.max_chain_exposure_pct}%")
-            exp = portfolio.exposure_by_asset_usd.get(base, ZERO) + notional_usd
+            # A spot arbitrage leaves net asset exposure unchanged (bought on one venue, sold on the other);
+            # carry strategies open a position, so only they add the notional.
+            carry = strategy in (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS)
+            exp = portfolio.exposure_by_asset_usd.get(base, ZERO) + (notional_usd if carry else ZERO)
             if pct(exp, total) > r.max_asset_exposure_pct:
-                reasons.append(f"exposure to {base} would exceed {r.max_asset_exposure_pct}%")
+                reasons.append(f"exposure to {base} {'would exceed' if carry else 'already exceeds'} {r.max_asset_exposure_pct}% of capital")
         elif capital_required_usd > 0 and flash_loan_usd is None:
             reasons.append("no capital available")
 

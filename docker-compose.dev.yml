@@ -1,0 +1,14 @@
+# Development overlay: hot reload backend, source mounted, debug logging.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  app:
+    build:
+      target: dev
+    command: ["uvicorn", "fedr.main:app", "--host", "0.0.0.0", "--port", "8935", "--reload", "--reload-dir", "/app/fedr"]
+    environment:
+      FEDR_LOG_LEVEL: DEBUG
+      FEDR_DEFAULT_MODE: simulation
+    volumes:
+      - ./backend/fedr:/app/fedr:ro
+      - ./data:/data
+    read_only: false

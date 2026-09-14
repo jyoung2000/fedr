@@ -50,6 +50,7 @@ class ProfitGuardInputs:
     deposit_fee_usd: Decimal | None = ZERO
     stablecoin_haircut_pct: Decimal = ZERO  # when buy/sell quote assets differ (USDC vs USDT)
     now_ms: int | None = None
+    round_trips: int = 1  # carry strategies must also unwind: fees are paid twice
 
 
 class ProfitGuard:
@@ -132,18 +133,37 @@ class ProfitGuard:
                 setattr(exp, name, D(val))
                 setattr(wc, name, D(val))
         exp.funding = inp.funding_cost_usd
-        wc.funding = inp.funding_cost_usd * t.worst_case_fee_multiplier if inp.funding_cost_usd > 0 else ZERO
+        if inp.funding_cost_usd > 0:
+            wc.funding = inp.funding_cost_usd * t.worst_case_fee_multiplier
+        else:  # funding *income* (negative cost): worst case assumes only half of it materialises
+            wc.funding = inp.funding_cost_usd / 2
+        if inp.round_trips > 1:
+            for cb in (exp, wc):
+                for f in ("buy_trading_fee", "sell_trading_fee", "dex_swap_fee", "slippage", "price_impact"):
+                    setattr(cb, f, getattr(cb, f) * inp.round_trips)
 
         # ---- allowances (percent of notional) -----------------------------------------
         notional = buy_notional_ref
-        exp.rebalance_allowance = notional * t.rebalance_allowance_pct / HUNDRED
-        wc.rebalance_allowance = exp.rebalance_allowance
-        exp.latency_allowance = notional * t.latency_allowance_pct / HUNDRED
-        wc.latency_allowance = exp.latency_allowance * 2
-        exp.partial_fill_allowance = notional * t.partial_fill_allowance_pct / HUNDRED
-        wc.partial_fill_allowance = exp.partial_fill_allowance * 2
-        exp.failure_reserve = notional * t.failure_reserve_pct / HUNDRED
-        wc.failure_reserve = exp.failure_reserve * 2 + (wc.gas if on_chain else ZERO)  # a failed tx still burns gas
+        atomic = inp.flash_loan is not None
+        if atomic:
+            # Atomic execution: no inventory to rebalance, no partial fills, no inter-leg latency. The real
+            # risks are (a) a revert that still burns gas and (b) the on-chain slippage tolerance being consumed.
+            exp.rebalance_allowance = wc.rebalance_allowance = ZERO
+            exp.latency_allowance = wc.latency_allowance = ZERO
+            exp.partial_fill_allowance = wc.partial_fill_allowance = ZERO
+            exp.failure_reserve = wc.gas * Decimal("0.5")  # expected cost of reverts (documented assumption: 50% weight)
+            wc.failure_reserve = wc.gas  # worst case: a full revert on top of a successful retry
+            tol = notional * Decimal(s.flash_loan.max_slippage_bps) / Decimal(10_000)
+            wc.slippage += tol  # min-out tolerance fully consumed
+        else:
+            exp.rebalance_allowance = notional * t.rebalance_allowance_pct / HUNDRED
+            wc.rebalance_allowance = exp.rebalance_allowance
+            exp.latency_allowance = notional * t.latency_allowance_pct / HUNDRED
+            wc.latency_allowance = exp.latency_allowance * 2
+            exp.partial_fill_allowance = notional * t.partial_fill_allowance_pct / HUNDRED
+            wc.partial_fill_allowance = exp.partial_fill_allowance * 2
+            exp.failure_reserve = notional * t.failure_reserve_pct / HUNDRED
+            wc.failure_reserve = exp.failure_reserve * 2 + (wc.gas if on_chain else ZERO)  # a failed tx still burns gas
         buffer_pct = t.safety_buffer_pct + max(ZERO, D(inp.experience_extra_pct)) + D(inp.stablecoin_haircut_pct)
         exp.safety_buffer = notional * buffer_pct / HUNDRED
         wc.safety_buffer = exp.safety_buffer

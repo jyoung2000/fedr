@@ -158,12 +158,16 @@ class FlashLoanSettings(BaseModel):
 
 
 class PaperSettings(BaseModel):
+    # Pre-funded inventory on BOTH sides of every default route (quote on the buy venue, base on the sell venue).
+    # Keys are exchange ids (paper market data via public CCXT endpoints) or chain names (bot wallet per chain).
     starting_balances: dict[str, dict[str, Dec]] = Field(
         default_factory=lambda: {
-            "kraken": {"USDC": Dec("2000"), "USD": Dec("500"), "SOL": Dec("0"), "ETH": Dec("0"), "BTC": Dec("0")},
-            "coinbase": {"USDC": Dec("2000"), "USD": Dec("500"), "SOL": Dec("0"), "ETH": Dec("0"), "BTC": Dec("0")},
-            "solana": {"USDC": Dec("2400"), "SOL": Dec("0.5")},
-            "evm": {"USDC": Dec("2400"), "ETH": Dec("0.03")},
+            "kraken": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
+            "coinbase": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
+            "binance": {"USDC": Dec("1200"), "USDT": Dec("300"), "BTC": Dec("0.004"), "ETH": Dec("0.12"), "SOL": Dec("2.5")},
+            "solana": {"USDC": Dec("1000"), "USDT": Dec("200"), "SOL": Dec("4")},
+            "base": {"USDC": Dec("600"), "USDT": Dec("100"), "ETH": Dec("0.09")},
+            "arbitrum": {"USDC": Dec("600"), "USDT": Dec("100"), "ETH": Dec("0.09")},
         }
     )
     stress_multiplier: Dec = Dec("2.0")  # pessimistic multiplier applied to slippage & gas

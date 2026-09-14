@@ -15,7 +15,7 @@ from fedr.sim.synthetic import SyntheticMarket
 class SyntheticCexVenue(VenueConnector):
     def __init__(self, market: SyntheticMarket, name: str, pairs: list[str], taker_fee_pct: Decimal):
         super().__init__(name, VenueKind.CEX, TradingMode.SIMULATION, display_name=f"{name.capitalize()} (simulated)")
-        self.market = market
+        self.sim = market
         self.pairs = pairs
         self.taker_fee_pct = taker_fee_pct
         self.capabilities.update({"orderbook", "synthetic"})
@@ -36,7 +36,7 @@ class SyntheticCexVenue(VenueConnector):
         return self.markets
 
     async def fetch_order_book(self, symbol: str, depth: int = 50) -> OrderBook:
-        ob = self.market.order_book(self.name, symbol, levels=min(depth, 40))
+        ob = self.sim.order_book(self.name, symbol, levels=min(depth, 40))
         self.health_tracker.last_market_data_ms = now_ms()
         self.health_tracker.record_latency(20.0)
         return ob
@@ -61,7 +61,7 @@ class SyntheticCexVenue(VenueConnector):
 class SyntheticDexVenue(VenueConnector):
     def __init__(self, market: SyntheticMarket, name: str, pairs: list[str], chain, gas_limit: int = 300_000):
         super().__init__(name, VenueKind.DEX, TradingMode.SIMULATION, display_name=f"{name} (simulated)")
-        self.market = market
+        self.sim = market
         self.pairs = pairs
         self.chain = chain
         self.gas_limit = gas_limit
@@ -75,12 +75,12 @@ class SyntheticDexVenue(VenueConnector):
         self.connected = False
 
     async def load_markets(self) -> dict[str, MarketInfo]:
-        fee = self.market.venues[self.name].pool_fee_pct
+        fee = self.sim.venues[self.name].pool_fee_pct
         self.markets = {p: MarketInfo(venue=self.name, symbol=p, base=p.split("/")[0], quote=p.split("/")[1], kind=VenueKind.DEX, amount_step=Decimal("0.000001"), taker_fee_pct=fee, chain=self.chain) for p in self.pairs}
         return self.markets
 
     async def get_quote(self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None) -> ExecutionQuote:
-        q = self.market.dex_quote(self.name, symbol, side, base_amount)
+        q = self.sim.dex_quote(self.name, symbol, side, base_amount)
         self.health_tracker.last_market_data_ms = now_ms()
         self.health_tracker.record_latency(120.0)
         if not q["ok"]:
@@ -91,10 +91,42 @@ class SyntheticDexVenue(VenueConnector):
         )
 
     async def fetch_fees(self, symbol: str) -> FeeSchedule:
-        return FeeSchedule(self.market.venues[self.name].pool_fee_pct, None, "simulated_pool")
+        return FeeSchedule(self.sim.venues[self.name].pool_fee_pct, None, "simulated_pool")
 
     async def fetch_balances(self) -> dict[str, Balance]:
         return {}
 
     async def place_order(self, req: OrderRequest) -> OrderResult:
         raise RuntimeError("synthetic venues never execute directly - use the paper executor")
+
+
+class SyntheticPerpVenue(SyntheticCexVenue):
+    """Simulated linear perpetual venue (symbols BASE/QUOTE:QUOTE) with a synthetic funding rate."""
+
+    def __init__(self, market: SyntheticMarket, name: str, pairs: list[str], taker_fee_pct: Decimal):
+        super().__init__(market, name, pairs, taker_fee_pct)
+        self.kind = VenueKind.PERP
+        self.capabilities.update({"funding", "positions"})
+
+    async def load_markets(self) -> dict[str, MarketInfo]:
+        self.markets = {}
+        for p in self.pairs:
+            base, quote = p.split("/")
+            sym = f"{base}/{quote}:{quote}"
+            self.markets[sym] = MarketInfo(venue=self.name, symbol=sym, base=base, quote=quote, kind=VenueKind.PERP, amount_step=Decimal("0.0001"), price_step=Decimal("0.01"), min_amount=Decimal("0.0001"), min_cost=Decimal("5"), taker_fee_pct=self.taker_fee_pct, maker_fee_pct=self.taker_fee_pct / 2, settle=quote)
+        return self.markets
+
+    async def fetch_order_book(self, symbol: str, depth: int = 50) -> OrderBook:
+        spot = symbol.split(":")[0]
+        ob = self.sim.order_book("binance", spot, levels=min(depth, 40))
+        # perp trades at a small premium to spot (positive basis) in the synthetic world
+        prem = Decimal("1.0004")
+        for lv in ob.bids + ob.asks:
+            lv.price = (lv.price * prem).quantize(Decimal("0.000001"))
+        ob.venue, ob.symbol = self.name, symbol
+        self.health_tracker.last_market_data_ms = now_ms()
+        self.health_tracker.record_latency(25.0)
+        return ob
+
+    async def fetch_funding_rate(self, symbol: str) -> dict:
+        return {"fundingRate": 0.0001, "interval": "8h", "symbol": symbol}

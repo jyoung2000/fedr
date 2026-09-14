@@ -263,7 +263,7 @@ class Repo:
                 await s.execute(select(PnlDaily).where(PnlDaily.mode == mode.value, PnlDaily.day == day))
             ).scalar_one_or_none()
             if row is None:
-                row = PnlDaily(mode=mode.value, day=day)
+                row = PnlDaily(mode=mode.value, day=day, gross="0", trading_fees="0", gas="0", funding="0", slippage="0", rebalancing="0", other="0", net="0", trades=0, wins=0)
                 s.add(row)
             row.gross = str(D(row.gross) + gross)
             row.trading_fees = str(D(row.trading_fees) + trading_fees)

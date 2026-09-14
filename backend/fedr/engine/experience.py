@@ -64,7 +64,7 @@ class ExperienceEngine:
     ) -> ExperienceStat:
         if notional_usd <= 0:
             notional_usd = Decimal("1")
-        s = self._cache.get(key) or ExperienceStat(key=key)
+        s = self._cache.get(key) or ExperienceStat(key=key, samples=0, error_pct_ewma="0", slippage_bias_pct="0", fee_variance_pct="0", gas_variance_pct="0", fill_reliability="1", latency_ms_ewma="0", extra_buffer_pct="0")
         err_pct = prediction_error_usd / notional_usd * 100
         slip_pct = slippage_variance_usd / notional_usd * 100
         fee_pct = fee_variance_usd / notional_usd * 100

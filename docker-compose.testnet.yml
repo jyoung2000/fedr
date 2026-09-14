@@ -1,0 +1,9 @@
+# Testnet overlay: exchange sandboxes + Solana devnet / Sepolia through Gateway. Test assets only.
+#   docker compose -f docker-compose.yml -f docker-compose.testnet.yml up -d
+services:
+  app:
+    environment:
+      FEDR_DEFAULT_MODE: testnet
+      FEDR_LIVE_TRADING_ALLOWED: "false"
+      FEDR_RPC_SEPOLIA: ${FEDR_RPC_SEPOLIA:-}
+      FEDR_RPC_SOLANA_DEVNET: ${FEDR_RPC_SOLANA_DEVNET:-}
