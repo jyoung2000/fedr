@@ -105,7 +105,7 @@ Non-root, `cap_drop ALL`, read-only FS, no-new-privileges. **Compose config vali
 
 See `.env.example` (complete list with comments).
 
-## Tests (84, all passing)
+## Tests (98, all passing)
 
 Order-book walking; Profit Guard identity, unknown costs, freshness, depth, DEX attribution, worst-case,
 ROI, gas regimes, experience buffer, explanations; **acceptance tests 1–5** (headline-profit-but-true-
@@ -117,7 +117,10 @@ breaker; DEX/RPC failure → failed leg not crash; gas spike blocks on-chain but
 persists across restart; reconciliation discrepancy pauses; restart recovery of trades/P&L/paper balances;
 shadow never submits; concurrency limit; slippage/latency/risk limits; circuit breakers; ledger/inventory/
 rebalancer/experience; crypto/redaction; API (health, headers, settings guards, live gate, toggles, paper
-controls, emergency stop, wallets/backup/deposit, exchanges honesty, backtest, auth + CSRF).
+controls, emergency stop, wallets/backup/deposit, exchanges honesty, backtest, auth + CSRF); offline connector
+tests (ccxt error mapping, every registry id exists in ccxt and its sandbox flag matches ccxt's `urls['test']`,
+order status/fee parsing, conservative price rounding, Gateway quote parsing / error codes / stale quoteId
+fail-closed / unreachable gateway via a mocked HTTP transport).
 
 ## UI QA
 

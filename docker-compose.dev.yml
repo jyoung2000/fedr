@@ -1,4 +1,5 @@
-# Development overlay: hot reload backend, source mounted, debug logging.
+# Development overlay: hot reload backend, source mounted, debug logging, SIMULATION mode.
+# The mounted source tree must contain the built UI: run ./scripts/build-ui.sh first (creates backend/fedr/static).
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 services:
   app:
