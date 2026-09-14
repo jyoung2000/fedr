@@ -122,9 +122,31 @@ tests (ccxt error mapping, every registry id exists in ccxt and its sandbox flag
 order status/fee parsing, conservative price rounding, Gateway quote parsing / error codes / stale quoteId
 fail-closed / unreachable gateway via a mocked HTTP transport).
 
-## UI QA
+## UI QA (performed)
 
-_Filled in below after the Playwright pass._
+React 18 + TypeScript SPA (`frontend/`), built with Vite into `backend/fedr/static` and served by the API on
+port **8935** (verified: `GET /` and SPA routes return the app; `/api/*` unaffected). Playwright/Chromium runs
+against the live SIMULATION backend:
+
+* `qa/ui_qa.py`: all 7 pages at 1280 px and 400 px — **0 console errors, 0 horizontal overflow, every
+  expected label present** (Gross / Expected / Worst case / Required, Emergency Stop, mode badge, Shadow,
+  Paper, Inventory, Deposit / Withdraw / External wallets, connector statuses, Trades / Audit, Risk profile /
+  Strategies / Flash loans / Live).
+* Frontend agent pass (`frontend/qa/report.json`, 54 checks): emergency-stop dialog open/Esc, "Why?" expander
+  persisting across 1 Hz snapshots, opportunity detail with expected-vs-worst-case cost table and explanation,
+  deposit modal error surfacing, MetaMask/Phantom-missing messages, Add-API-keys modal with the
+  READ/TRADE/WITHDRAW-OFF note, history tabs and trade-detail modal, advanced settings round-trip (11 sections),
+  flash-loan warning text, 15-item readiness checklist with Activate disabled when not ready, keyboard focus,
+  dark mode.
+* Issues found and fixed during QA: event-stream indicator read "Live" (confusable with LIVE mode) → "Connected";
+  connection state not synced when another component opened the stream first; recent trades empty after a
+  restart (now DB-backed); simulated balances satisfied the "funded" readiness item (now never); simulated
+  venues indistinguishable from real exchanges on the Exchanges page (now badged SIMULATED); cramped
+  opportunity rows; aborted trades showed "pending" instead of "—".
+* Not exercisable here: real MetaMask/Phantom connections, real deposits/withdrawals, LIVE activation (env gate
+  off by design), cookie login end-to-end in a browser (covered by API tests).
+* LIVE mode styling (red top border, "LIVE — REAL MONEY" badge) is implemented and unit-visible in code; it
+  could not be screenshotted because live activation is impossible in this environment.
 
 ## Known limitations
 
