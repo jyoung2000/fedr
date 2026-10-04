@@ -7,6 +7,8 @@ import time
 
 import httpx
 
+from fedr.db.migrations import LATEST
+
 
 def test_live_ready_and_public_health(fedr):
     with fedr.client(auth=False) as c:
@@ -86,7 +88,7 @@ def test_database_schema_and_audit_trail(fedr):
     try:
         assert con.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         ver = con.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert ver == 2
+        assert ver == LATEST
         n = con.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
         assert n >= 1
     finally:

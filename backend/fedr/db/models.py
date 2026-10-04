@@ -91,12 +91,17 @@ class Trade(Base):
     actual_net: Mapped[str | None] = mapped_column(String(32), nullable=True)
     prediction_error: Mapped[str | None] = mapped_column(String(32), nullable=True)
     explanation: Mapped[str] = mapped_column(Text, default="")
-    payload: Mapped[dict] = mapped_column(JSON)  # full TradeRecord (legs, fills, events, costs)
+    payload: Mapped[dict] = mapped_column(JSON)  # full TradeRecord (legs, fills, events, costs, reservations)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # authoritative | incomplete | legacy (written before schema v3: provenance of realized values unproven)
+    settlement: Mapped[str | None] = mapped_column(String(16), nullable=True, default="authoritative")
 
 
 class Order(Base):
+    """Order journal. A row is written with status ``submitting`` BEFORE the transport call (durable intent)
+    and updated on every acknowledgement / fill. ``client_order_id`` is the venue idempotency / lookup key."""
+
     __tablename__ = "orders"
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     trade_id: Mapped[str] = mapped_column(String(40), index=True)
@@ -115,6 +120,12 @@ class Order(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    client_order_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    venue_order_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(24), nullable=True)  # buy | sell | hedge | close_*
+    account_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    cost: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FillRow(Base):
@@ -186,6 +197,8 @@ class PnlDaily(Base):
     net: Mapped[str] = mapped_column(String(40), default="0")
     trades: Mapped[int] = mapped_column(Integer, default=0)
     wins: Mapped[int] = mapped_column(Integer, default=0)
+    # True for rows written before schema v3 (may include carry entry spreads booked twice - audit F06)
+    legacy: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     __table_args__ = (Index("ix_pnl_key", "mode", "day", unique=True),)
 
 
@@ -304,6 +317,28 @@ class MarketCache(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     __table_args__ = (Index("ix_market_key", "venue", "symbol", unique=True),)
+
+
+class LedgerEntry(Base):
+    """Durable expected-balance ledger for real venues (reconciliation baseline).
+
+    Expected balance(account, asset) = sum(delta). Kinds: ``opening`` (documented checkpoint: first observation
+    of an account/asset), ``fill`` / ``fee`` / ``gas`` (confirmed executions), ``funding``, ``transfer``
+    (deposits/withdrawals) and ``adjustment`` (explicit, operator-approved reconciliation). Rows are never
+    rewritten; corrections are new rows."""
+
+    __tablename__ = "ledger_entries"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    account: Mapped[str] = mapped_column(String(80), index=True)  # ledger venue (CEX name or chain wallet)
+    asset: Mapped[str] = mapped_column(String(24), index=True)
+    delta: Mapped[str] = mapped_column(String(48))
+    kind: Mapped[str] = mapped_column(String(16))
+    ref: Mapped[str | None] = mapped_column(String(160), nullable=True)  # trade / order / tx reference
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), nullable=True, unique=True)
+    actor: Mapped[str] = mapped_column(String(40), default="system")
+    note: Mapped[str] = mapped_column(Text, default="")
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class SchemaVersion(Base):

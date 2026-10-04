@@ -214,11 +214,29 @@ class GatewayConnector(VenueConnector):
         self.health_tracker.last_balance_ms = now_ms()
         return {k: Balance(asset=k, free=v) for k, v in bal.items() if v > 0}
 
+    # Gateway error codes that prove the swap was NOT broadcast (validation / simulation before sending).
+    DEFINITIVE_FAILURE_CODES = (
+        "SIMULATION_FAILED",
+        "SLIPPAGE_EXCEEDED",
+        "INSUFFICIENT_BALANCE",
+        "NO_ROUTE_FOUND",
+        "INVALID_PARAMETERS",
+        "QUOTE_NOT_FOUND",
+    )
+
+    def max_order_duration_s(self, req: OrderRequest) -> float:
+        """Upper bound of :meth:`place_order` (request + confirmation polling) for the caller's timeout."""
+        return self.client.timeout_s + self._confirmation_window_s(req) + 5.0
+
+    @staticmethod
+    def _confirmation_window_s(req: OrderRequest) -> float:
+        return max(15.0, (req.deadline_ms or 30_000) / 1000)
+
     async def place_order(self, req: OrderRequest) -> OrderResult:
         if not self.wallet_address:
             raise ConnectorError(f"{self.name}: no bot wallet configured")
         base, quote = req.symbol.split("/")
-        result = OrderResult(request=req, order_id=req.client_order_id, status=OrderStatus.NEW)
+        result = OrderResult(request=req, order_id=req.client_order_id, status=OrderStatus.SUBMITTING)
         t0 = time.perf_counter()
         try:
             if req.quote_id and self.spec.trading_type == "router":
@@ -244,17 +262,21 @@ class GatewayConnector(VenueConnector):
             raise
         except GatewayError as exc:
             self.health_tracker.record_error()
-            self.health_tracker.record_order(False)
-            result.completed_at_ms = now_ms()
-            result.error = f"{exc.code or exc.status}: {exc}"
-            if exc.code == "TRANSACTION_TIMEOUT":
-                # the tx may still land: report as pending so reconciliation resolves it
-                result.status = OrderStatus.OPEN
-                sig = _extract_signature(str(exc))
+            result.error = f"{exc.code or exc.status}: {exc}"[:300]
+            sig = _extract_signature(str(exc)) or _extract_signature(str(exc.payload))
+            if exc.code == "TRANSACTION_TIMEOUT" or (
+                exc.code not in self.DEFINITIVE_FAILURE_CODES
+                and (exc.transport_ambiguous or exc.status >= 500)
+            ):
+                # The transaction may have been broadcast and may still land: UNKNOWN, never FAILED.
+                result.status = OrderStatus.UNKNOWN
                 result.tx_hash = sig
+                result.raw["unknown_reason"] = f"gateway {exc.code or exc.status} after submit"
                 if sig:
                     return await self._await_confirmation(result, sig, req)
-                raise VenueUnavailable(str(exc)) from exc
+                return result
+            self.health_tracker.record_order(False)
+            result.completed_at_ms = now_ms()
             result.status = (
                 OrderStatus.FAILED
                 if exc.code in ("SIMULATION_FAILED", "SLIPPAGE_EXCEEDED", "INSUFFICIENT_BALANCE")
@@ -265,7 +287,7 @@ class GatewayConnector(VenueConnector):
             self.health_tracker.record_latency((time.perf_counter() - t0) * 1000)
         sig = str(resp.get("signature") or "")
         status = int(resp.get("status") if resp.get("status") is not None else 0)
-        result.tx_hash = sig
+        result.tx_hash = sig or None
         result.raw["response"] = {k: v for k, v in resp.items() if k != "data"}
         if status == 1:
             self._apply_confirmed(result, resp.get("data") or {}, req)
@@ -273,15 +295,53 @@ class GatewayConnector(VenueConnector):
             result.status = OrderStatus.FAILED
             result.error = "transaction failed on-chain"
             self.health_tracker.record_order(False)
-        else:
+        elif sig:
             return await self._await_confirmation(result, sig, req)
+        else:
+            result.status = OrderStatus.UNKNOWN
+            result.raw["unknown_reason"] = "pending response without a transaction signature"
+            return result
         result.completed_at_ms = now_ms()
         return result
+
+    async def resolve_order(self, result: OrderResult) -> OrderResult:
+        return await self.resolve_tx(result)
+
+    async def resolve_tx(self, result: OrderResult) -> OrderResult:
+        """Recovery: query a pending/unknown transaction once and apply a confirmed outcome."""
+        if not result.tx_hash:
+            return result
+        try:
+            p = await self.client.poll(self.spec.gateway_chain, self.network, result.tx_hash)
+        except GatewayError as exc:
+            result.raw["lookup"] = f"poll failed: {str(exc)[:120]}"
+            return result
+        self._apply_poll(result, p, result.request)
+        return result
+
+    def _apply_poll(self, result: OrderResult, p: dict, req: OrderRequest) -> bool:
+        """Apply a poll response. Returns True when the outcome is final."""
+        st = int(p.get("txStatus") if p.get("txStatus") is not None else 0)
+        if st == 1:
+            data = {**(p.get("txData") or {}), **(p.get("data") or {})}
+            if p.get("fee") is not None:
+                data.setdefault("fee", p.get("fee"))
+            self._apply_confirmed(result, data, req)
+            result.completed_at_ms = now_ms()
+            return True
+        if st == -1:
+            result.status = OrderStatus.FAILED
+            result.error = str(p.get("error") or "transaction failed")
+            result.completed_at_ms = now_ms()
+            self.health_tracker.record_order(False)
+            return True
+        return False
 
     async def _await_confirmation(
         self, result: OrderResult, signature: str, req: OrderRequest
     ) -> OrderResult:
-        deadline = time.monotonic() + max(15.0, (req.deadline_ms or 30_000) / 1000)
+        result.tx_hash = signature
+        deadline = time.monotonic() + self._confirmation_window_s(req)
         while time.monotonic() < deadline:
             await asyncio.sleep(1.5)
             try:
@@ -289,25 +349,17 @@ class GatewayConnector(VenueConnector):
             except GatewayError as exc:
                 log.warning("poll failed", venue=self.name, error=str(exc))
                 continue
-            st = int(p.get("txStatus") if p.get("txStatus") is not None else 0)
-            if st == 1:
-                data = p.get("txData") or {}
-                self._apply_confirmed(result, {"fee": p.get("fee")}, req, tx_data=data)
-                result.completed_at_ms = now_ms()
+            if self._apply_poll(result, p, req):
                 return result
-            if st == -1:
-                result.status = OrderStatus.FAILED
-                result.error = str(p.get("error") or "transaction failed")
-                result.completed_at_ms = now_ms()
-                self.health_tracker.record_order(False)
-                return result
-        result.status = OrderStatus.OPEN  # unresolved: reconciliation must settle it
+        # unresolved: the tx may still confirm. Keep exposure; recovery resolves it by signature.
+        result.status = OrderStatus.UNKNOWN
         result.error = "confirmation timeout - transaction still pending"
+        result.raw["unknown_reason"] = "confirmation timeout"
         return result
 
-    def _apply_confirmed(
-        self, result: OrderResult, data: dict, req: OrderRequest, tx_data: dict | None = None
-    ) -> None:
+    def _apply_confirmed(self, result: OrderResult, data: dict, req: OrderRequest) -> None:
+        """A CONFIRMED swap. Amounts come from the decoded balance changes; when Gateway does not report them
+        the quote value stays UNKNOWN (never price 0) and accounting refuses to book realized P&L."""
         base_change = D(data.get("baseTokenBalanceChange") or 0)
         quote_change = D(data.get("quoteTokenBalanceChange") or 0)
         if base_change == 0 and quote_change == 0:
@@ -317,31 +369,40 @@ class GatewayConnector(VenueConnector):
                 base_change, quote_change = ao, -ai
             else:
                 base_change, quote_change = -ai, ao
+        amounts_known = base_change != 0 and quote_change != 0
+        # exact-in sell / exact-out buy: the base amount equals the requested amount when not reported
         filled = abs(base_change) if base_change else req.amount
-        quote_amt = abs(quote_change)
-        price = quote_amt / filled if filled > 0 and quote_amt > 0 else ZERO
+        quote_amt = abs(quote_change) if quote_change else None
+        price = quote_amt / filled if (quote_amt is not None and filled > 0) else None
         fee_native = D(data.get("fee") or 0)
         native_px = self.native_usd_price(self.chain.native_token) if self.chain else None
+        gas_known = fee_native == 0 or native_px is not None
         gas_usd = fee_native * native_px if (native_px is not None and fee_native) else ZERO
         result.filled = filled
         result.avg_price = price
+        result.cost = quote_amt
         result.gas_cost_usd = gas_usd
-        result.fills.append(
-            Fill(
-                order_id=result.order_id,
-                venue=self.name,
-                symbol=req.symbol,
-                side=req.side,
-                amount=filled,
-                price=price,
-                fee_amount=ZERO,  # DEX pool fee is embedded in the executed price
-                fee_asset="",
-                tx_hash=result.tx_hash,
-                gas_cost_usd=gas_usd,
-            )
-        )
+        result.gas_known = gas_known
+        result.fees_complete = True  # pool fees are embedded in the executed amounts
+        if amounts_known:
+            result.fills = [
+                Fill(
+                    order_id=result.order_id,
+                    venue=self.name,
+                    symbol=req.symbol,
+                    side=req.side,
+                    amount=filled,
+                    price=price,
+                    fee_amount=ZERO,  # DEX pool fee is embedded in the executed price
+                    fee_asset="",
+                    tx_hash=result.tx_hash,
+                    gas_cost_usd=gas_usd if gas_known else None,
+                )
+            ]
+        else:
+            result.raw["amounts_unknown"] = True
         result.raw["gas_native"] = str(fee_native)
-        result.raw["gas_usd_unpriced"] = native_px is None and fee_native > 0
+        result.raw["gas_usd_unpriced"] = not gas_known
         result.status = OrderStatus.FILLED
         self.health_tracker.record_order(True)
 

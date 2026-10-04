@@ -26,8 +26,10 @@ from ccxt.base.errors import (
     AuthenticationError,
     BadSymbol,
     DDoSProtection,
+    ExchangeError,
     ExchangeNotAvailable,
     InsufficientFunds,
+    InvalidNonce,
     InvalidOrder,
     NetworkError,
     NotSupported,
@@ -96,6 +98,32 @@ def _map_error(exc: Exception) -> ConnectorError:
     if isinstance(exc, BadSymbol):
         return ConnectorError(f"bad symbol: {exc}")
     return ConnectorError(str(exc))
+
+
+def is_ambiguous_submit_error(exc: BaseException) -> bool:
+    """True when a failed create_order may nevertheless have been accepted by the venue.
+
+    A response the venue actually returned (ExchangeError family: invalid order, insufficient funds,
+    auth, bad symbol) or an explicit throttle/maintenance answer is a definitive rejection. A timeout, a
+    dropped connection or a 5xx gateway error can happen after the venue accepted the order."""
+    if isinstance(exc, (RateLimitExceeded, DDoSProtection, OnMaintenance, InvalidNonce)):
+        return False
+    if isinstance(exc, (RequestTimeout, ExchangeNotAvailable, NetworkError)):
+        return True
+    if isinstance(exc, ExchangeError):
+        return False
+    return True  # anything unexpected (asyncio timeout, aiohttp error, bug) is treated as uncertain
+
+
+def _fee_items(raw: dict) -> list[tuple[Decimal, str]]:
+    """Fee entries reported on a ccxt order/trade as (amount, currency). Entries without a cost are skipped."""
+    entries = raw.get("fees") or ([raw["fee"]] if raw.get("fee") else [])
+    out: list[tuple[Decimal, str]] = []
+    for f in entries:
+        if not f or f.get("cost") is None:
+            continue
+        out.append((D(f["cost"]), str(f.get("currency") or "")))
+    return out
 
 
 class CcxtConnector(VenueConnector):
@@ -404,14 +432,30 @@ class CcxtConnector(VenueConnector):
         self.health_tracker.last_balance_ms = now_ms()
         return out
 
+    # ------------------------------------------------------------------ amounts (base <-> venue units)
+    def _contract_size(self, symbol: str) -> Decimal:
+        m = self.markets.get(symbol)
+        cs = m.contract_size if m is not None else Decimal(1)
+        return cs if cs and cs > 0 else Decimal(1)
+
+    def to_venue_amount(self, symbol: str, base_amount: Decimal) -> Decimal:
+        """Engine amounts are always in BASE units; linear swaps trade in contracts of ``contractSize`` base."""
+        return base_amount / self._contract_size(symbol)
+
+    def to_base_amount(self, symbol: str, venue_amount: Decimal) -> Decimal:
+        return venue_amount * self._contract_size(symbol)
+
     def _quantize(
         self, symbol: str, amount: Decimal, price: Decimal | None, side: OrderSide = OrderSide.BUY
     ) -> tuple[Decimal, Decimal | None]:
+        """Quantize a BASE amount into the venue's order amount (contracts for swaps) and a limit price."""
         m = self.markets.get(symbol)
         if m is None:
+            if self.market_type == "swap":
+                raise OrderRejected(f"{symbol} is not a loaded linear swap market on {self.name}")
             return amount, price
-        amt = floor_to_step(amount, m.amount_step)
-        if amt < m.min_amount:
+        amt = floor_to_step(self.to_venue_amount(symbol, amount), m.amount_step)
+        if amt <= 0 or amt < m.min_amount:
             raise OrderRejected(f"amount {amt} below minimum {m.min_amount} on {self.name}")
         if price is not None:
             # conservative rounding: a buy limit rounds down, a sell limit rounds up (never loosens the limit)
@@ -420,20 +464,35 @@ class CcxtConnector(VenueConnector):
                 if side is OrderSide.BUY
                 else ceil_to_step(price, m.price_step)
             )
-        if price is not None and m.min_cost and amt * price < m.min_cost:
-            raise OrderRejected(f"order cost {amt * price} below minimum {m.min_cost} on {self.name}")
+        base_amt = self.to_base_amount(symbol, amt)
+        if price is not None and m.min_cost and base_amt * price < m.min_cost:
+            raise OrderRejected(f"order cost {base_amt * price} below minimum {m.min_cost} on {self.name}")
         return amt, price
 
+    # ------------------------------------------------------------------ orders
     async def place_order(self, req: OrderRequest) -> OrderResult:
+        """Submit one IOC limit order and follow it to a KNOWN outcome where possible.
+
+        Uncertainty is never collapsed into "no fill": a transport failure after the request may have
+        reached the venue, a failed cancel, or a status query that returns nothing all leave the order in
+        ``UNKNOWN`` / ``CANCEL_PENDING`` (non-terminal). The caller keeps exposure and reservations for it and
+        resolves it later through :meth:`resolve_order` using the persistent client order id.
+        """
         if not self.credentials:
             raise ConnectorError(f"{self.name}: no credentials - cannot place orders")
+        if req.reduce_only and self.market_type != "swap":
+            raise OrderRejected("reduce_only is only valid on derivative markets")
         amount, price = self._quantize(req.symbol, req.amount, req.limit_price, req.side)
         params: dict[str, Any] = {"clientOrderId": req.client_order_id}
         if price is None:
             raise OrderRejected("market orders without a limit price are not allowed (use IOC limit)")
         if req.time_in_force in ("IOC", "FOK"):
             params["timeInForce"] = req.time_in_force
-        result = OrderResult(request=req, order_id="", status=OrderStatus.NEW)
+        if req.reduce_only:
+            params["reduceOnly"] = True
+        result = OrderResult(request=req, order_id="", status=OrderStatus.SUBMITTING)
+        result.raw["client_order_id"] = req.client_order_id
+        result.raw["venue_amount"] = str(amount)
         t0 = time.perf_counter()
         try:
             try:
@@ -442,6 +501,7 @@ class CcxtConnector(VenueConnector):
                 )
             except InvalidOrder as exc:
                 if "timeInForce" in str(exc) or "time in force" in str(exc).lower():
+                    # a definitive rejection of the parameter: nothing was accepted, retry without it once
                     params.pop("timeInForce", None)
                     raw = await self.exchange.create_order(
                         req.symbol, "limit", req.side.value, float(amount), float(price), params
@@ -451,148 +511,263 @@ class CcxtConnector(VenueConnector):
                     raise
         except Exception as exc:
             self.health_tracker.record_error()
+            self._note_rate_limit(exc)
+            result.error = str(exc)[:300]
+            if is_ambiguous_submit_error(exc):
+                # The request may have been accepted. Resolve by client order id; otherwise stay UNKNOWN.
+                result.status = OrderStatus.UNKNOWN
+                result.raw["unknown_reason"] = f"transport failure after submit: {type(exc).__name__}"
+                await self.resolve_order(result)
+                return result
             self.health_tracker.record_order(False)
             result.status = OrderStatus.REJECTED
-            result.error = str(exc)
             result.completed_at_ms = now_ms()
-            mapped = _map_error(exc)
-            if isinstance(mapped, VenueUnavailable):
-                raise mapped from exc
             return result
         finally:
             self.health_tracker.record_latency((time.perf_counter() - t0) * 1000)
-        result.order_id = str(raw.get("id") or req.client_order_id)
+        result.order_id = str(raw.get("id") or "")
+        if not result.order_id:
+            result.raw["venue_id_missing"] = True
         self._apply_order(result, raw)
         deadline = time.monotonic() + (req.deadline_ms or 8000) / 1000
         while not result.is_terminal and time.monotonic() < deadline:
             await asyncio.sleep(0.25)
-            fetched = await self._fetch_raw_order(result.order_id, req.symbol)
+            fetched, _ = await self._fetch_raw_order(result)
             if fetched:
                 self._apply_order(result, fetched)
         if not result.is_terminal:
-            try:
-                await self.exchange.cancel_order(result.order_id, req.symbol)
-            except OrderNotFound:
-                pass
-            except Exception as exc:
-                log.warning("cancel failed", venue=self.name, order=result.order_id, error=str(exc))
-            fetched = await self._fetch_raw_order(result.order_id, req.symbol)
-            if fetched:
-                self._apply_order(result, fetched)
-            if not result.is_terminal:
-                result.status = OrderStatus.CANCELLED if result.filled == 0 else OrderStatus.PARTIALLY_FILLED
-        if result.filled > 0 and not result.fills:
-            await self._load_fills(result)
-        result.completed_at_ms = now_ms()
-        self.health_tracker.record_order(
-            result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED, OrderStatus.CANCELLED)
-        )
-        if result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+            await self._cancel_and_confirm(result)
+        await self._complete_fill_details(result)
+        if result.is_terminal:
+            result.completed_at_ms = now_ms()
+            self.health_tracker.record_order(
+                result.status
+                in (
+                    OrderStatus.FILLED,
+                    OrderStatus.PARTIALLY_FILLED,
+                    OrderStatus.CANCELLED,
+                    OrderStatus.EXPIRED,
+                )
+            )
+        if result.status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED) or result.filled > 0:
             self.permissions["trade"] = True
         return result
 
-    async def _fetch_raw_order(self, order_id: str, symbol: str) -> dict | None:
+    async def _cancel_and_confirm(self, result: OrderResult) -> None:
+        """Cancel a still-working order and confirm the final state. Never infers CANCELLED from silence."""
+        req = result.request
+        try:
+            await self.exchange.cancel_order(result.order_id or None, req.symbol, self._id_params(result))
+            result.raw["cancel"] = "requested"
+        except OrderNotFound:
+            result.raw["cancel"] = "not_found"  # already closed OR never known: must be confirmed by a fetch
+        except Exception as exc:
+            self.health_tracker.record_error()
+            result.raw["cancel"] = f"failed: {str(exc)[:160]}"
+            log.warning("cancel failed", venue=self.name, order=result.order_id, error=str(exc)[:160])
+        for _ in range(4):
+            fetched, _ = await self._fetch_raw_order(result)
+            if fetched:
+                self._apply_order(result, fetched)
+                if result.is_terminal:
+                    return
+            await asyncio.sleep(0.3)
+        if not result.is_terminal:
+            result.status = (
+                OrderStatus.CANCEL_PENDING
+                if str(result.raw.get("cancel")) == "requested"
+                else OrderStatus.UNKNOWN
+            )
+            result.error = (result.error or "") + " | final state not confirmed by the venue"
+            result.raw["unknown_reason"] = (
+                f"cancel {result.raw.get('cancel')}; status query returned no final state"
+            )
+
+    def _id_params(self, result: OrderResult) -> dict[str, Any]:
+        return {"clientOrderId": result.request.client_order_id}
+
+    async def _fetch_raw_order(self, result: OrderResult) -> tuple[dict | None, bool]:
+        """(raw order, definitively_not_found). Errors are NOT reported as not-found."""
+        symbol = result.request.symbol
+        not_found = False
         for attempt in range(3):
             try:
-                return await self.exchange.fetch_order(order_id, symbol)
+                if result.order_id:
+                    return await self.exchange.fetch_order(result.order_id, symbol), False
+                return await self.exchange.fetch_order(None, symbol, self._id_params(result)), False
             except OrderNotFound:
+                not_found = True
                 await asyncio.sleep(0.3 * (attempt + 1))
             except Exception as exc:
+                not_found = False
                 self.health_tracker.record_error()
-                log.warning("fetch_order failed", venue=self.name, error=str(exc))
+                log.warning("fetch_order failed", venue=self.name, error=str(exc)[:160])
                 await asyncio.sleep(0.3)
+        return None, not_found
+
+    async def resolve_order(self, result: OrderResult) -> OrderResult:
+        """Look an uncertain order up by venue id or persistent client order id and apply what the venue
+        reports. Used after transport loss and by startup recovery. Leaves the order UNKNOWN when the venue
+        cannot confirm its state."""
+        raw, not_found = await self._fetch_raw_order(result)
+        if raw is None and not result.order_id:
+            raw = await self._find_by_client_id(result)
+        if raw is not None:
+            if not result.order_id:
+                result.order_id = str(raw.get("id") or "")
+            self._apply_order(result, raw)
+            await self._complete_fill_details(result)
+            if result.is_terminal:
+                result.completed_at_ms = result.completed_at_ms or now_ms()
+            elif result.status is OrderStatus.OPEN and result.raw.get("resolve_cancel", True):
+                await self._cancel_and_confirm(result)
+                await self._complete_fill_details(result)
+            return result
+        result.raw["lookup"] = "not_found" if not_found else "unavailable"
+        if result.status not in (OrderStatus.UNKNOWN, OrderStatus.CANCEL_PENDING):
+            result.status = OrderStatus.UNKNOWN
+        return result
+
+    async def _find_by_client_id(self, result: OrderResult) -> dict | None:
+        cid = result.request.client_order_id
+        sym = result.request.symbol
+        since = result.submitted_at_ms - 120_000
+        for name in ("fetch_open_orders", "fetch_closed_orders", "fetch_canceled_orders"):
+            fn = getattr(self.exchange, name, None)
+            key = {"fetch_open_orders": "fetchOpenOrders", "fetch_closed_orders": "fetchClosedOrders"}.get(
+                name, "fetchCanceledOrders"
+            )
+            if fn is None or not self.exchange.has.get(key):
+                continue
+            try:
+                orders = await (fn(sym) if name == "fetch_open_orders" else fn(sym, since))
+            except Exception as exc:
+                log.warning("client-id lookup failed", venue=self.name, method=name, error=str(exc)[:120])
+                continue
+            for o in orders or []:
+                if str(o.get("clientOrderId") or "") == cid:
+                    return o
         return None
 
     def _apply_order(self, result: OrderResult, raw: dict) -> None:
+        """Apply a venue order snapshot. Cumulative fields only move forward; fills are de-duplicated."""
+        sym = result.request.symbol
         status = _STATUS_MAP.get(str(raw.get("status") or "").lower())
-        filled = D(raw.get("filled") or 0)
+        filled = self.to_base_amount(sym, D(raw.get("filled") or 0))
         result.filled = max(result.filled, filled)
         if raw.get("average"):
             result.avg_price = D(raw["average"])
-        if status is OrderStatus.FILLED or (raw.get("remaining") == 0 and filled > 0):
+        if raw.get("cost") is not None and D(raw["cost"]) > 0:
+            result.cost = max(result.cost or ZERO, D(raw["cost"]))
+        remaining = raw.get("remaining")
+        if status is OrderStatus.FILLED or (remaining is not None and D(remaining) == 0 and filled > 0):
             result.status = OrderStatus.FILLED
         elif status in (OrderStatus.CANCELLED, OrderStatus.EXPIRED, OrderStatus.REJECTED):
-            result.status = (
-                OrderStatus.PARTIALLY_FILLED
-                if result.filled > 0 and status is not OrderStatus.REJECTED
-                else status
-            )
-            if status is OrderStatus.CANCELLED and result.filled > 0:
-                result.status = OrderStatus.PARTIALLY_FILLED
+            if result.filled > 0:
+                result.status = OrderStatus.PARTIALLY_FILLED  # final partial fill
+            else:
+                result.status = status
         elif status is OrderStatus.OPEN:
-            result.status = OrderStatus.PARTIALLY_FILLED if result.filled > 0 else OrderStatus.OPEN
-        trades = raw.get("trades") or []
-        if trades and not result.fills:
-            for t in trades:
-                result.fills.append(self._fill_from_trade(result, t))
-            result.fee_quote = self._fees_in_quote(result)
-        elif raw.get("fee") and raw["fee"].get("cost") is not None and not result.fills:
-            result.raw["fee"] = raw["fee"]
+            result.status = OrderStatus.OPEN  # still working (possibly with partial fills)
+        elif result.status is OrderStatus.SUBMITTING:
+            result.status = OrderStatus.OPEN  # acknowledged by the venue, state not yet reported
+        for t in raw.get("trades") or []:
+            self._add_fill(result, t)
+        fee_items = _fee_items(raw)
+        if fee_items:
+            result.fee_items = fee_items
         result.raw["last"] = {
-            k: raw.get(k) for k in ("id", "status", "filled", "remaining", "average", "cost", "fee")
+            k: raw.get(k)
+            for k in ("id", "clientOrderId", "status", "filled", "remaining", "average", "cost", "fee")
         }
+        self._update_fee_completeness(result)
+
+    def _add_fill(self, result: OrderResult, t: dict) -> None:
+        tid = str(t.get("id") or "")
+        if tid and any(f.trade_id == tid for f in result.fills):
+            return  # late / repeated trade arrays never double count
+        if not tid and result.fills:
+            return  # unidentifiable trade on an order that already has fills: cannot de-duplicate safely
+        result.fills.append(self._fill_from_trade(result, t))
 
     def _fill_from_trade(self, result: OrderResult, t: dict) -> Fill:
-        fee = t.get("fee") or {}
+        fees = _fee_items(t)
+        fee_amount, fee_asset = fees[0] if len(fees) == 1 else (ZERO, "")
+        sym = result.request.symbol
         return Fill(
             order_id=result.order_id,
             venue=self.name,
-            symbol=result.request.symbol,
+            symbol=sym,
             side=result.request.side,
-            amount=D(t.get("amount") or 0),
+            amount=self.to_base_amount(sym, D(t.get("amount") or 0)),
             price=D(t.get("price") or 0),
-            fee_amount=D(fee.get("cost") or 0),
-            fee_asset=str(fee.get("currency") or ""),
+            fee_amount=fee_amount,
+            fee_asset=fee_asset,
             ts_ms=int(t.get("timestamp") or now_ms()),
             trade_id=str(t.get("id") or ""),
+            # a trade without (exactly one) fee entry has an UNKNOWN fee, not a zero fee
+            fee_known=len(fees) == 1,
         )
 
+    def _update_fee_completeness(self, result: OrderResult) -> None:
+        if result.filled == 0:
+            result.fees_complete = True
+        elif result.fills_cover_filled and all(f.fee_known for f in result.fills):
+            result.fees_complete = True
+        elif result.fee_items:
+            result.fees_complete = True
+        else:
+            result.fees_complete = False
+        result.fee_quote = self._fees_in_quote(result)
+
+    async def _complete_fill_details(self, result: OrderResult) -> None:
+        """Fetch trades when the order snapshot did not carry fills covering the filled amount."""
+        if result.filled > 0 and not result.fills_cover_filled:
+            await self._load_fills(result)
+        self._update_fee_completeness(result)
+
     async def _load_fills(self, result: OrderResult) -> None:
+        if not result.order_id or not self.exchange.has.get("fetchMyTrades"):
+            return
         try:
             trades = await self.exchange.fetch_my_trades(
                 result.request.symbol, since=result.submitted_at_ms - 60_000, limit=100
             )
         except Exception as exc:
-            log.warning("fetch_my_trades failed", venue=self.name, error=str(exc))
+            log.warning("fetch_my_trades failed", venue=self.name, error=str(exc)[:160])
+            result.raw["fills_unavailable"] = str(exc)[:160]
             return
-        for t in trades:
+        for t in trades or []:
             if str(t.get("order")) == result.order_id:
-                result.fills.append(self._fill_from_trade(result, t))
-        if result.fills:
-            result.fee_quote = self._fees_in_quote(result)
+                self._add_fill(result, t)
+        if result.fills_cover_filled:
             total = sum((f.amount for f in result.fills), ZERO)
-            if total > 0:
-                result.avg_price = sum((f.amount * f.price for f in result.fills), ZERO) / total
-        elif result.raw.get("fee"):
-            fee = result.raw["fee"]
-            result.fee_quote = self._fee_to_quote(
-                D(fee.get("cost") or 0), str(fee.get("currency") or ""), result
-            )
+            result.avg_price = sum((f.amount * f.price for f in result.fills), ZERO) / total
 
     def _fees_in_quote(self, result: OrderResult) -> Decimal:
-        return sum(
-            (self._fee_to_quote(f.fee_amount, f.fee_asset, result, f.price) for f in result.fills), ZERO
+        """Fees convertible from the order's own data (quote or base asset). Third-asset fees (BNB, KCS…)
+        are left to accounting, which converts them with a price index or marks them unknown."""
+        items = (
+            [(f.fee_amount, f.fee_asset, f.price) for f in result.fills if f.fee_known]
+            if result.fills
+            else [(a, c, None) for a, c in result.fee_items]
         )
-
-    def _fee_to_quote(
-        self, amount: Decimal, asset: str, result: OrderResult, price: Decimal | None = None
-    ) -> Decimal:
         m = self.markets.get(result.request.symbol)
-        if m is None or amount == 0:
-            return amount
-        if asset == m.quote:
-            return amount
-        px = price or result.avg_price or result.request.limit_price or ZERO
-        if asset == m.base:
-            return amount * px
-        # Fee paid in a third asset (e.g. BNB/KCS): we cannot convert here without a price index;
-        # fall back to the schedule estimate and flag it so reconciliation can revisit.
-        result.raw["fee_asset_unconverted"] = asset
-        fee = self._fee_cache.get(result.request.symbol)
-        rate = fee.taker_pct if (fee and fee.taker_pct is not None) else m.taker_fee_pct
-        if rate is None and self.spec is not None:
-            rate = self.spec.fallback_taker_pct
-        return result.quote_amount * rate / 100 if rate is not None else ZERO
+        total = ZERO
+        for amount, asset, px in items:
+            if amount == 0:
+                continue
+            if m is not None and asset == m.quote:
+                total += amount
+            elif m is not None and asset == m.base:
+                p = px or result.avg_price
+                if p:
+                    total += amount * p
+                else:
+                    result.raw["fee_asset_unconverted"] = asset
+            else:
+                result.raw["fee_asset_unconverted"] = asset
+        return total
 
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         try:
@@ -605,17 +780,15 @@ class CcxtConnector(VenueConnector):
             raise _map_error(exc) from exc
 
     async def fetch_order(self, order_id: str, symbol: str) -> OrderResult | None:
-        raw = await self._fetch_raw_order(order_id, symbol)
+        req = OrderRequest(venue=self.name, symbol=symbol, side=OrderSide.BUY, amount=ZERO, limit_price=None)
+        probe = OrderResult(request=req, order_id=order_id, status=OrderStatus.UNKNOWN)
+        raw, _ = await self._fetch_raw_order(probe)
         if raw is None:
             return None
-        req = OrderRequest(
-            venue=self.name,
-            symbol=symbol,
-            side=OrderSide(raw.get("side") or "buy"),
-            amount=D(raw.get("amount") or 0),
-            limit_price=D(raw["price"]) if raw.get("price") else None,
-        )
-        res = OrderResult(request=req, order_id=order_id, status=OrderStatus.OPEN)
+        req.side = OrderSide(raw.get("side") or "buy")
+        req.amount = self.to_base_amount(symbol, D(raw.get("amount") or 0))
+        req.limit_price = D(raw["price"]) if raw.get("price") else None
+        res = OrderResult(request=req, order_id=order_id, status=OrderStatus.SUBMITTING)
         self._apply_order(res, raw)
         return res
 

@@ -170,13 +170,19 @@ class EnableBody(BaseModel):
 
 @router.post("/exchanges/accounts/{account_id}/enabled")
 async def enable_account(account_id: str, body: EnableBody, app=Depends(require_app)):
-    await app.set_exchange_enabled(account_id, body.enabled)
+    try:
+        await app.set_exchange_enabled(account_id, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"ok": True}
 
 
 @router.delete("/exchanges/accounts/{account_id}")
 async def delete_account(account_id: str, app=Depends(require_app)):
-    await app.remove_exchange_account(account_id)
+    try:
+        await app.remove_exchange_account(account_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"ok": True}
 
 

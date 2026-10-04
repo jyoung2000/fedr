@@ -318,6 +318,8 @@ class Fill:
     tx_hash: str | None = None
     gas_used: int | None = None
     gas_cost_usd: Decimal | None = None
+    # False when the venue reported this fill without fee information: the fee is UNKNOWN, not zero.
+    fee_known: bool = True
 
 
 @dataclass(slots=True)
@@ -335,6 +337,15 @@ class OrderResult:
     tx_hash: str | None = None
     error: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    # Venue-reported cumulative quote value of the fills (ccxt ``cost``, decoded swap amounts). None = unknown.
+    cost: Decimal | None = None
+    # Order-level fees as reported by the venue, (amount, asset). Used when per-fill fees are unavailable.
+    fee_items: list[tuple[Decimal, str]] = field(default_factory=list)
+    # True only when every fee of this order is captured in ``fills`` / ``fee_items``; False = known missing;
+    # None = the producer made no claim (legacy). Unknown fees block realized-P&L booking.
+    fees_complete: bool | None = None
+    # True when the gas/network fee of this leg is known in USD (False when e.g. the native price is missing)
+    gas_known: bool = True
 
     @property
     def remaining(self) -> Decimal:
@@ -342,17 +353,60 @@ class OrderResult:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in (
-            OrderStatus.FILLED,
-            OrderStatus.CANCELLED,
-            OrderStatus.REJECTED,
-            OrderStatus.EXPIRED,
-            OrderStatus.FAILED,
-        )
+        """Terminal = the outcome is final AND known. UNKNOWN / CANCEL_PENDING / SUBMITTING are never terminal."""
+        return self.status in TERMINAL_ORDER_STATUSES
 
     @property
-    def quote_amount(self) -> Decimal:
-        return sum((f.amount * f.price for f in self.fills), ZERO)
+    def outcome_unknown(self) -> bool:
+        """The venue may hold (more) fills for this order than we know about."""
+        return not self.is_terminal
+
+    @property
+    def fills_cover_filled(self) -> bool:
+        return bool(self.fills) and sum((f.amount for f in self.fills), ZERO) == self.filled
+
+    @property
+    def quote_value(self) -> Decimal | None:
+        """Authoritative quote value of what filled, or None when it is not known.
+
+        Source priority: per-fill trades covering the whole filled amount, the venue-reported cumulative
+        cost, the venue-reported average price x filled. Missing data is never treated as zero."""
+        if self.filled == 0:
+            return ZERO
+        if self.fills_cover_filled:
+            return sum((f.amount * f.price for f in self.fills), ZERO)
+        if self.cost is not None and self.cost > 0:
+            return self.cost
+        if self.avg_price is not None and self.avg_price > 0:
+            return self.filled * self.avg_price
+        return None
+
+    @property
+    def quote_amount(self) -> Decimal | None:
+        """Backwards-compatible alias of :pyattr:`quote_value` (None = unknown, never a fabricated 0)."""
+        return self.quote_value
+
+    @property
+    def fee_known(self) -> bool:
+        if self.filled == 0:
+            return True
+        if self.fees_complete is not None:
+            return self.fees_complete
+        if self.fee_items:
+            return True
+        return self.fills_cover_filled and all(f.fee_known for f in self.fills)
+
+
+# PARTIALLY_FILLED means *final* partial fill (IOC remainder cancelled / cancel confirmed). An order that is
+# still working with some fills is OPEN with ``filled > 0``.
+TERMINAL_ORDER_STATUSES = (
+    OrderStatus.FILLED,
+    OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.CANCELLED,
+    OrderStatus.REJECTED,
+    OrderStatus.EXPIRED,
+    OrderStatus.FAILED,
+)
 
 
 @dataclass(slots=True)
@@ -381,9 +435,20 @@ class TradeRecord:
     started_at_ms: int = field(default_factory=now_ms)
     completed_at_ms: int | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
+    # Capital held for this trade until every leg is resolved: [{"kind": "inventory"|"paper", "venue", "asset",
+    # "amount"}]. Persisted with the trade so a restart restores them (journal recovery).
+    reservations: list[dict[str, str]] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def log(self, event: str, **data: Any) -> None:
         self.events.append({"ts": now_ms(), "event": event, **{k: str(v) for k, v in data.items()}})
+
+    def legs(self) -> list[tuple[str, OrderResult]]:
+        return [(r, leg) for r, leg in (("buy", self.buy), ("sell", self.sell), ("hedge", self.hedge)) if leg]
+
+    @property
+    def unresolved_legs(self) -> list[tuple[str, OrderResult]]:
+        return [(r, leg) for r, leg in self.legs() if leg.outcome_unknown]
 
 
 # --------------------------------------------------------------------------- venue health
@@ -403,6 +468,102 @@ class HealthReport:
     execution_reliability_pct: float | None = None
     reasons: list[str] = field(default_factory=list)
     checked_at_ms: int = field(default_factory=now_ms)
+
+
+def _dec(v: Any) -> Decimal | None:
+    return None if v is None else D(v)
+
+
+def order_result_from_dict(d: dict[str, Any]) -> OrderResult:
+    """Inverse of ``to_jsonable(OrderResult)`` (journal recovery)."""
+    r = d["request"]
+    req = OrderRequest(
+        venue=r["venue"],
+        symbol=r["symbol"],
+        side=OrderSide(r["side"]),
+        amount=D(r["amount"]),
+        limit_price=_dec(r.get("limit_price")),
+        time_in_force=r.get("time_in_force", "IOC"),
+        client_order_id=r["client_order_id"],
+        min_received=_dec(r.get("min_received")),
+        max_gas_usd=_dec(r.get("max_gas_usd")),
+        quote_id=r.get("quote_id"),
+        deadline_ms=r.get("deadline_ms"),
+        reduce_only=bool(r.get("reduce_only", False)),
+        extra=dict(r.get("extra") or {}),
+    )
+    fills = [
+        Fill(
+            order_id=f["order_id"],
+            venue=f["venue"],
+            symbol=f["symbol"],
+            side=OrderSide(f["side"]),
+            amount=D(f["amount"]),
+            price=D(f["price"]),
+            fee_amount=D(f["fee_amount"]),
+            fee_asset=f.get("fee_asset", ""),
+            ts_ms=int(f.get("ts_ms") or now_ms()),
+            trade_id=f.get("trade_id"),
+            tx_hash=f.get("tx_hash"),
+            gas_used=f.get("gas_used"),
+            gas_cost_usd=_dec(f.get("gas_cost_usd")),
+            fee_known=bool(f.get("fee_known", True)),
+        )
+        for f in d.get("fills") or []
+    ]
+    fees_complete = d.get("fees_complete")
+    return OrderResult(
+        request=req,
+        order_id=d.get("order_id") or "",
+        status=OrderStatus(d["status"]),
+        filled=D(d.get("filled") or 0),
+        avg_price=_dec(d.get("avg_price")),
+        fills=fills,
+        fee_quote=D(d.get("fee_quote") or 0),
+        gas_cost_usd=D(d.get("gas_cost_usd") or 0),
+        submitted_at_ms=int(d.get("submitted_at_ms") or now_ms()),
+        completed_at_ms=d.get("completed_at_ms"),
+        tx_hash=d.get("tx_hash"),
+        error=d.get("error"),
+        raw=dict(d.get("raw") or {}),
+        cost=_dec(d.get("cost")),
+        fee_items=[(D(a), str(c)) for a, c in d.get("fee_items") or []],
+        fees_complete=None if fees_complete is None else bool(fees_complete),
+        gas_known=bool(d.get("gas_known", True)),
+    )
+
+
+def trade_from_dict(d: dict[str, Any]) -> TradeRecord:
+    """Inverse of ``to_jsonable(TradeRecord)`` (journal recovery)."""
+    tr = TradeRecord(
+        id=d["id"],
+        mode=TradingMode(d["mode"]),
+        strategy=Strategy(d["strategy"]),
+        opportunity_id=d.get("opportunity_id", ""),
+        pair=d["pair"],
+        route=d.get("route", ""),
+        size_base=D(d["size_base"]),
+        status=TradeStatus(d["status"]),
+        estimated_gross=D(d.get("estimated_gross") or 0),
+        estimated_net=D(d.get("estimated_net") or 0),
+        estimated_worst_case=D(d.get("estimated_worst_case") or 0),
+        estimated_costs=dict(d.get("estimated_costs") or {}),
+        actual_gross=_dec(d.get("actual_gross")),
+        actual_fees=_dec(d.get("actual_fees")),
+        actual_gas=_dec(d.get("actual_gas")),
+        actual_net=_dec(d.get("actual_net")),
+        prediction_error=_dec(d.get("prediction_error")),
+        explanation=d.get("explanation", ""),
+        started_at_ms=int(d.get("started_at_ms") or now_ms()),
+        completed_at_ms=d.get("completed_at_ms"),
+        events=list(d.get("events") or []),
+        reservations=list(d.get("reservations") or []),
+        extra=dict(d.get("extra") or {}),
+    )
+    for role in ("buy", "sell", "hedge"):
+        if d.get(role):
+            setattr(tr, role, order_result_from_dict(d[role]))
+    return tr
 
 
 def to_jsonable(obj: Any) -> Any:
@@ -441,5 +602,7 @@ __all__ = [
     "TradeRecord",
     "new_id",
     "now_ms",
+    "order_result_from_dict",
     "to_jsonable",
+    "trade_from_dict",
 ]

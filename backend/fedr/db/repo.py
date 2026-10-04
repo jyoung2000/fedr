@@ -150,9 +150,19 @@ class Repo:
             return list((await s.execute(q)).scalars())
 
     # ------------------------------------------------------------------ trades / orders / fills
+    @staticmethod
+    def order_key(trade_id: str, leg) -> str:
+        """Stable journal key: the client order id exists before transport (the venue id may never arrive)."""
+        return f"{trade_id}:{leg.request.client_order_id}"
+
     async def save_trade(self, tr: TradeRecord) -> None:
+        """Persist the trade, its order journal rows and fills (idempotent: safe to call at every step)."""
         payload = to_jsonable(tr)
+        settlement = "incomplete" if tr.status.value in ("unknown", "unreconciled") else "authoritative"
         async with self.db.session() as s:
+            existing_trade = await s.get(Trade, tr.id)
+            if existing_trade is not None and existing_trade.settlement == "legacy":
+                settlement = "legacy"
             await s.merge(
                 Trade(
                     id=tr.id,
@@ -173,6 +183,7 @@ class Repo:
                     prediction_error=None if tr.prediction_error is None else str(tr.prediction_error),
                     explanation=tr.explanation,
                     payload=payload,
+                    settlement=settlement,
                     started_at=datetime.fromtimestamp(tr.started_at_ms / 1000, tz=UTC),
                     completed_at=(
                         datetime.fromtimestamp(tr.completed_at_ms / 1000, tz=UTC)
@@ -181,12 +192,11 @@ class Repo:
                     ),
                 )
             )
-            for leg in (tr.buy, tr.sell, tr.hedge):
-                if leg is None:
-                    continue
+            for role, leg in tr.legs():
+                key = self.order_key(tr.id, leg)
                 await s.merge(
                     Order(
-                        id=f"{tr.id}:{leg.order_id}",
+                        id=key,
                         trade_id=tr.id,
                         mode=tr.mode.value,
                         venue=leg.request.venue,
@@ -202,31 +212,117 @@ class Repo:
                         tx_hash=leg.tx_hash,
                         error=leg.error,
                         payload=to_jsonable(leg.raw),
+                        client_order_id=leg.request.client_order_id,
+                        venue_order_id=leg.order_id or None,
+                        role=role,
+                        account_ref=str(leg.request.extra.get("account_ref") or "") or None,
+                        cost=None if leg.cost is None else str(leg.cost),
+                        updated_at=utcnow(),
                     )
                 )
-                existing = (
-                    await s.execute(
-                        select(FillRow.trade_id).where(FillRow.order_id == f"{tr.id}:{leg.order_id}")
-                    )
-                ).first()
-                if existing is None:
-                    for f in leg.fills:
-                        s.add(
-                            FillRow(
-                                order_id=f"{tr.id}:{leg.order_id}",
-                                trade_id=tr.id,
-                                mode=tr.mode.value,
-                                venue=f.venue,
-                                symbol=f.symbol,
-                                side=f.side.value,
-                                amount=str(f.amount),
-                                price=str(f.price),
-                                fee_amount=str(f.fee_amount),
-                                fee_asset=f.fee_asset,
-                                tx_hash=f.tx_hash,
-                                ts=datetime.fromtimestamp(f.ts_ms / 1000, tz=UTC),
-                            )
+                # fills are part of the order state: replace them so late / repeated trade reports and restart
+                # replay can never double count (OrderResult.fills is already de-duplicated by trade id)
+                await s.execute(delete(FillRow).where(FillRow.order_id == key))
+                for f in leg.fills:
+                    s.add(
+                        FillRow(
+                            order_id=key,
+                            trade_id=tr.id,
+                            mode=tr.mode.value,
+                            venue=f.venue,
+                            symbol=f.symbol,
+                            side=f.side.value,
+                            amount=str(f.amount),
+                            price=str(f.price),
+                            fee_amount=str(f.fee_amount),
+                            fee_asset=f.fee_asset,
+                            tx_hash=f.tx_hash,
+                            ts=datetime.fromtimestamp(f.ts_ms / 1000, tz=UTC),
                         )
+                    )
+
+    async def unresolved_trades(self, mode: TradingMode | None = None) -> list[Trade]:
+        """Trades that still own exposure / reservations (journal recovery input)."""
+        from fedr.core.enums import UNRESOLVED_TRADE_STATUSES
+
+        async with self.db.session() as s:
+            q = select(Trade).where(Trade.status.in_(list(UNRESOLVED_TRADE_STATUSES)))
+            if mode is not None:
+                q = q.where(Trade.mode == mode.value)
+            return list((await s.execute(q.order_by(Trade.started_at))).scalars())
+
+    async def orders_for_trade(self, trade_id: str) -> list[Order]:
+        async with self.db.session() as s:
+            return list((await s.execute(select(Order).where(Order.trade_id == trade_id))).scalars())
+
+    async def known_client_order_ids(self, mode: TradingMode) -> set[str]:
+        async with self.db.session() as s:
+            q = select(Order.client_order_id, Order.venue_order_id).where(Order.mode == mode.value)
+            out: set[str] = set()
+            for cid, vid in (await s.execute(q)).all():
+                if cid:
+                    out.add(cid)
+                if vid:
+                    out.add(vid)
+            return out
+
+    # ------------------------------------------------------------------ reconciliation ledger
+    async def add_ledger_entries(self, mode: TradingMode, entries: list[dict]) -> int:
+        """Append ledger rows; rows whose ``dedupe_key`` already exists are skipped (replay-safe)."""
+        from fedr.db.models import LedgerEntry
+
+        added = 0
+        async with self.db.session() as s:
+            for e in entries:
+                key = e.get("dedupe_key")
+                if (
+                    key
+                    and (await s.execute(select(LedgerEntry.id).where(LedgerEntry.dedupe_key == key))).first()
+                ):
+                    continue
+                s.add(
+                    LedgerEntry(
+                        mode=mode.value,
+                        account=e["account"],
+                        asset=e["asset"],
+                        delta=str(e["delta"]),
+                        kind=e["kind"],
+                        ref=e.get("ref"),
+                        dedupe_key=key,
+                        actor=e.get("actor", "system"),
+                        note=e.get("note", ""),
+                    )
+                )
+                added += 1
+        return added
+
+    async def ledger_balances(self, mode: TradingMode) -> dict[tuple[str, str], Decimal]:
+        from fedr.db.models import LedgerEntry
+
+        async with self.db.session() as s:
+            rows = (
+                await s.execute(
+                    select(LedgerEntry.account, LedgerEntry.asset, LedgerEntry.delta).where(
+                        LedgerEntry.mode == mode.value
+                    )
+                )
+            ).all()
+        out: dict[tuple[str, str], Decimal] = {}
+        for acct, asset, delta in rows:
+            out[(acct, asset)] = out.get((acct, asset), ZERO) + D(delta)
+        return out
+
+    async def list_ledger_entries(self, mode: TradingMode, limit: int = 200) -> list:
+        from fedr.db.models import LedgerEntry
+
+        async with self.db.session() as s:
+            q = (
+                select(LedgerEntry)
+                .where(LedgerEntry.mode == mode.value)
+                .order_by(desc(LedgerEntry.ts))
+                .limit(limit)
+            )
+            return list((await s.execute(q)).scalars())
 
     async def list_trades(self, mode: TradingMode, limit: int = 100, offset: int = 0) -> list[Trade]:
         async with self.db.session() as s:
@@ -294,6 +390,7 @@ class Repo:
                     net="0",
                     trades=0,
                     wins=0,
+                    legacy=False,
                 )
                 s.add(row)
             row.gross = str(D(row.gross) + gross)
@@ -304,6 +401,8 @@ class Repo:
             row.rebalancing = str(D(row.rebalancing) + rebalancing)
             row.other = str(D(row.other) + other)
             row.net = str(D(row.net) + net)
+            if row.legacy is None:
+                row.legacy = False
             row.trades += 1
             row.wins += 1 if win else 0
 

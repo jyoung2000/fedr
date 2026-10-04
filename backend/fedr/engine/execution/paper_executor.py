@@ -121,6 +121,8 @@ class PaperExecutor:
         )
         result.filled = fill_base
         result.avg_price = avg_price
+        result.cost = quote_amount
+        result.fees_complete = True
         result.fee_quote = fee_quote
         result.gas_cost_usd = gas_usd
         result.status = OrderStatus.FILLED if fill_base >= req.amount else OrderStatus.PARTIALLY_FILLED

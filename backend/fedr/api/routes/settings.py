@@ -78,7 +78,10 @@ async def risk_profile(body: ProfileBody, app=Depends(require_app)):
         p = RiskProfile(body.profile)
     except ValueError as exc:
         raise HTTPException(400, "unknown profile") from exc
-    new = await app.update_settings({"general": {"risk_profile": p.value}})
+    try:
+        new = await app.update_settings({"general": {"risk_profile": p.value}})
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"settings": new.to_public_dict()}
 
 

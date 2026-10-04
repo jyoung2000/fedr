@@ -87,6 +87,10 @@ class RiskSettings(BaseModel):
     inventory_reserve_pct: Dec = Dec("10")
     leverage_allowed: bool = False
     auto_bridging_allowed: bool = False
+    # Recovery policy: a CONFIRMED one-leg imbalance is hedged (bounded to the confirmed imbalance, at most
+    # three venues) even while the emergency stop is active - a stop blocks new risk, it must not silently
+    # leave an unhedged position. Set False to leave confirmed imbalances for the operator during a stop.
+    hedge_during_emergency_stop: bool = True
     asset_allowlist: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "USDC", "USDT", "USD"])
 
 

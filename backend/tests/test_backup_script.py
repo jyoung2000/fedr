@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from fedr.db.migrations import LATEST
+
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("fedr_backup", ROOT / "scripts" / "backup.py")
 backup = importlib.util.module_from_spec(spec)
@@ -65,7 +67,7 @@ def test_create_verify_restore_roundtrip(data_dir, tmp_path, capsys):
     assert (fresh / "database" / "fedr.db").exists()
     con = sqlite3.connect(fresh / "database" / "fedr.db")
     assert con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0] == 1
-    assert con.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+    assert con.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == LATEST
     con.close()
     assert "no master key restored" in capsys.readouterr().out
     # refuses to clobber a non-empty target without --force
@@ -80,7 +82,7 @@ def test_include_secrets_flag_and_manifest(data_dir, tmp_path):
         names = set(tar.getnames())
         manifest = json.loads(tar.extractfile("manifest.json").read())
     assert "config/master.key" in names and manifest["includes_secrets"] is True
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == LATEST
     assert backup.verify(out) == 0
 
 

@@ -231,6 +231,16 @@ class VenueConnector(ABC):
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         raise NotSupportedError("cancel not supported")
 
+    def max_order_duration_s(self, req: OrderRequest) -> float:
+        """Upper bound for one :meth:`place_order` call (submit, poll, cancel-and-confirm, fill lookup).
+        The executor's outer timeout is derived from this so it never cuts a leg short of its own logic."""
+        return (req.deadline_ms or 8000) / 1000 + 15.0
+
+    async def resolve_order(self, result: OrderResult) -> OrderResult:
+        """Resolve an order whose outcome is UNKNOWN / CANCEL_PENDING (by client order id or tx hash).
+        Connectors that cannot look orders up leave it unresolved - never assume it did not fill."""
+        return result
+
     async def fetch_order(self, order_id: str, symbol: str) -> OrderResult | None:
         return None
 

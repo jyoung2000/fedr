@@ -115,6 +115,7 @@ class FedrApp:
         self.auth_token: str | None = None
         self.auth_token_source: str = "none"
         self.metrics = Metrics()
+        self.recovery_report: dict | None = None
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -182,6 +183,16 @@ class FedrApp:
             ]
         )
         await self._load_daily_stats()
+        # ---- startup recovery barrier: resolve or quarantine journaled work before any new submission ----
+        self.ctx.admission.recovery_note = "journal recovery running"
+        try:
+            self.recovery_report = await self.executor.recover_on_startup()
+        except Exception as exc:  # the barrier stays closed: no admission on an unknown journal state
+            log.error("journal recovery failed - admission stays closed", error=str(exc), exc_info=True)
+            self.ctx.admission.recovery_note = f"journal recovery failed: {str(exc)[:160]}"
+        else:
+            self.ctx.admission.recovery_complete = True
+            self.ctx.admission.recovery_note = ""
         self.started_at_ms = now_ms()
         self._tasks = [
             asyncio.create_task(self._scan_loop(), name="scan"),
@@ -189,6 +200,7 @@ class FedrApp:
             asyncio.create_task(self._gas_loop(), name="gas"),
             asyncio.create_task(self._balance_loop(), name="balances"),
             asyncio.create_task(self._reconcile_loop(), name="reconcile"),
+            asyncio.create_task(self._resolution_loop(), name="resolution"),
             asyncio.create_task(self._housekeeping_loop(), name="housekeeping"),
             asyncio.create_task(self._positions_loop(), name="positions"),
         ]
@@ -270,6 +282,9 @@ class FedrApp:
             experience=experience,
             rebalancer=rebalancer,
         )
+        # closed until FedrApp.start() has run journal recovery
+        self.ctx.admission.recovery_complete = False
+        self.ctx.admission.recovery_note = "starting up"
         self.opportunities = OpportunityEngine(self.ctx)
         self.executor = ExecutionEngine(self.ctx, self.opportunities, on_trade=self._on_trade)
         self.flashloan = FlashLoanEngine(self.ctx, self.wallets, self.env)
@@ -289,6 +304,8 @@ class FedrApp:
         """(Re)create venue connectors for the current mode and settings."""
         async with self._rebuild_lock:
             ctx = self.ctx
+            # every admission prepared against the previous connector set is now refused
+            ctx.admission.bump()
             await ctx.hub.stop()
             for c in ctx.connectors.values():
                 with contextlib.suppress(Exception):
@@ -711,6 +728,39 @@ class FedrApp:
             except Exception as exc:
                 log.error("reconcile loop error", error=str(exc))
 
+    def active_work(self) -> list[str]:
+        """Work that a connector swap would orphan: in-flight / unresolved trades and open positions."""
+        out: list[str] = []
+        if self.ctx is None:
+            return out
+        if self.ctx.open_trade_ids:
+            out.append(f"{len(self.ctx.open_trade_ids)} trade(s) in flight or unresolved")
+        if self.executor and self.executor.unresolved:
+            out.append(f"{len(self.executor.unresolved)} trade(s) with an unknown order outcome")
+        if self.positions and self.positions.open:
+            out.append(f"{len(self.positions.open)} open {self.mode.value} carry position(s)")
+        return out
+
+    def _assert_no_active_work(self, action: str) -> None:
+        work = self.active_work()
+        if work:
+            raise ValueError(
+                f"cannot {action} while there is active work ({'; '.join(work)}): "
+                "close positions and resolve open trades first, so nothing loses its monitoring"
+            )
+
+    async def _resolution_loop(self) -> None:
+        """Resolve unknown order outcomes by lookup (client order id / tx hash) every few seconds."""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if self.executor and self.executor.unresolved:
+                    await self.executor.resolve_unresolved()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("resolution loop error", error=str(exc))
+
     async def _positions_loop(self) -> None:
         """Carry positions: mark, accrue due funding, apply exit rules (every 10 s)."""
         while True:
@@ -858,12 +908,15 @@ class FedrApp:
                 actor=actor,
             )
         if structural:
+            self._assert_no_active_work("change the mode, pairs, DEXes, strategies or paper balances")
+        if structural:
             await self.rebuild_connectors()
             await self._load_daily_stats()
         return new
 
     # ------------------------------------------------------------------ live activation
     async def activate_live(self, confirmation: str, actor: str = "user") -> dict:
+        self._assert_no_active_work("switch to LIVE")
         checklist = await live_readiness(self)
         if confirmation.strip() != LIVE_CONFIRMATION_PHRASE:
             raise ValueError(f"type the exact confirmation phrase: {LIVE_CONFIRMATION_PHRASE}")
@@ -979,7 +1032,10 @@ class FedrApp:
             {"exchange": exchange_id, "ok": result["ok"], "permissions": result.get("permissions")},
         )
         if result["ok"] and self.mode.value == mode:
-            await self.rebuild_connectors()
+            if self.active_work():
+                log.warning("new account stored; connectors are rebuilt once active work is resolved")
+            else:
+                await self.rebuild_connectors()
         return {"id": acct.id, **result}
 
     async def _test_credentials(self, exchange_id: str, creds: dict[str, str], sandbox: bool) -> dict:
@@ -1015,12 +1071,14 @@ class FedrApp:
         return result
 
     async def remove_exchange_account(self, account_id: str) -> None:
+        self._assert_no_active_work("remove an exchange account")
         await self.repo.delete_exchange_account(account_id)
         self.exchange_accounts = await self.repo.list_exchange_accounts()
         await self.repo.audit(self.mode, "exchange", f"Exchange account removed: {account_id}", {})
         await self.rebuild_connectors()
 
     async def set_exchange_enabled(self, account_id: str, enabled: bool) -> None:
+        self._assert_no_active_work("enable/disable an exchange account")
         await self.repo.update_exchange_account(account_id, enabled=enabled)
         self.exchange_accounts = await self.repo.list_exchange_accounts()
         await self.rebuild_connectors()

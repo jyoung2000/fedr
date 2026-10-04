@@ -9,10 +9,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fedr.connectors.base import ConnectorError, VenueConnector
-from fedr.core.enums import OrderSide, VenueHealth, VenueKind
+from fedr.core.enums import OrderSide, OrderStatus, VenueHealth, VenueKind
 from fedr.core.logging import get_logger
 from fedr.core.models import ExecutionQuote, OrderRequest, OrderResult, TradeRecord, new_id
-from fedr.core.money import HUNDRED, D
+from fedr.core.money import HUNDRED, ZERO, D
 
 log = get_logger("hedge")
 
@@ -22,9 +22,19 @@ class EmergencyHedger:
         self.ctx = ctx
 
     async def hedge(
-        self, trade: TradeRecord, pair: str, exposure_base: Decimal, exclude: set[str] | None = None
+        self,
+        trade: TradeRecord,
+        pair: str,
+        exposure_base: Decimal,
+        exclude: set[str] | None = None,
+        before_submit=None,
+        submit=None,
     ) -> OrderResult | None:
-        """Positive exposure = we are long base (need to SELL); negative = short (need to BUY)."""
+        """Positive exposure = we are long base (need to SELL); negative = short (need to BUY).
+
+        Bounded policy: at most three venue attempts, each for the CONFIRMED remaining imbalance only. Every
+        attempt is journaled (``before_submit``) before transport. An attempt whose outcome is unknown ends
+        the hedge immediately - trying another venue could double the hedge."""
         if exposure_base == 0:
             return None
         side = OrderSide.SELL if exposure_base > 0 else OrderSide.BUY
@@ -71,36 +81,57 @@ class EmergencyHedger:
                 amount=amount,
                 limit_price=limit,
                 time_in_force="IOC",
-                client_order_id=new_id("hedge"),
+                client_order_id=new_id("fh"),
                 min_received=(q.quote_amount * (1 - tol)) if side is OrderSide.SELL else None,
                 quote_id=q.quote_id,
                 deadline_ms=self.ctx.settings.trading.execution_timeout_ms,
                 extra={"quoted_price": str(q.avg_price), "emergency": True},
             )
             trade.log("hedge_attempt", venue=venue.name, side=side.value, amount=amount, limit=limit)
+            if before_submit is not None:
+                try:
+                    await before_submit(OrderResult(request=req, order_id="", status=OrderStatus.SUBMITTING))
+                except Exception as exc:
+                    trade.log("hedge_not_journaled", venue=venue.name, error=str(exc)[:120])
+                    return None  # never transmit without a durable intent
+            paper = self.ctx.is_simulated_execution and self.ctx.paper_executor is not None
+            lv = self.ctx.ledger_venue_for(venue)
+            reserved = ZERO
             try:
-                if self.ctx.is_simulated_execution and self.ctx.paper_executor is not None:
-                    lv = self.ctx.ledger_venue_for(venue)
-                    if side is OrderSide.SELL:
-                        await self.ctx.ledger.reserve(lv, base, amount)
-                    else:
-                        await self.ctx.ledger.reserve(
-                            lv, quote, q.quote_amount * (1 + tol) * (1 + D(q.fee_pct or 0) / HUNDRED)
-                        )
-                    res = await self.ctx.paper_executor.execute_leg(venue, req, q)
-                    if res.filled < amount:
-                        rem = amount - res.filled
-                        await self.ctx.ledger.release(
-                            lv,
-                            base if side is OrderSide.SELL else quote,
-                            rem if side is OrderSide.SELL else rem * q.avg_price,
-                        )
-                else:
-                    res = await venue.place_order(req)
-            except Exception as exc:
+                if paper:
+                    reserved = (
+                        amount
+                        if side is OrderSide.SELL
+                        else q.quote_amount * (1 + tol) * (1 + D(q.fee_pct or 0) / HUNDRED)
+                    )
+                    await self.ctx.ledger.reserve(lv, base if side is OrderSide.SELL else quote, reserved)
+            except ValueError as exc:
                 trade.log("hedge_error", venue=venue.name, error=str(exc))
                 continue
+            try:
+                if submit is not None:
+                    res = await submit(venue, req, q)
+                elif paper:
+                    res = await self.ctx.paper_executor.execute_leg(venue, req, q)
+                else:
+                    res = await venue.place_order(req)
+            except ConnectorError as exc:  # pre-transport validation: nothing was sent
+                trade.log("hedge_error", venue=venue.name, error=str(exc))
+                res = OrderResult(request=req, order_id="", status=OrderStatus.REJECTED, error=str(exc)[:200])
+            except Exception as exc:
+                res = OrderResult(request=req, order_id="", status=OrderStatus.UNKNOWN, error=str(exc)[:200])
+                res.raw["unknown_reason"] = f"{type(exc).__name__} during hedge submission"
+            if paper:
+                used = res.filled if side is OrderSide.SELL else (res.quote_value or ZERO) + res.fee_quote
+                await self.ctx.ledger.release(
+                    lv, base if side is OrderSide.SELL else quote, max(ZERO, reserved - used)
+                )
+            if res.outcome_unknown:
+                trade.log("hedge_outcome_unknown", venue=venue.name, order=req.client_order_id)
+                return res
             if res.filled > 0:
                 trade.log("hedge_filled", venue=venue.name, filled=res.filled, price=res.avg_price)
                 return res
+            if before_submit is not None:
+                await before_submit(res)  # journal the final (unfilled) state of this attempt
         return None

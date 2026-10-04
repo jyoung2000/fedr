@@ -79,6 +79,15 @@ class InventoryManager:
                     )
             self._reservations[trade_id] = [(v, a, D(x)) for v, a, x in needs]
 
+    async def restore(self, trade_id: str, needs: list[tuple[str, str, Decimal]]) -> None:
+        """Re-apply a reservation recorded in the journal (restart recovery). No availability check: the
+        capital was committed before the restart and stays committed until the trade is resolved."""
+        async with self._lock:
+            self._reservations[trade_id] = [(v, a, D(x)) for v, a, x in needs]
+
+    def reservation(self, trade_id: str) -> list[tuple[str, str, Decimal]]:
+        return list(self._reservations.get(trade_id, []))
+
     async def release(self, trade_id: str) -> None:
         async with self._lock:
             self._reservations.pop(trade_id, None)

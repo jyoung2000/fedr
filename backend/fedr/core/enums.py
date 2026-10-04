@@ -88,12 +88,27 @@ class TradeStatus(str, Enum):
     RECOVERING = "recovering"  # one-leg fill / imbalance -> emergency handling
     HEDGED = "hedged"
     CANCELLED = "cancelled"
+    # At least one leg's outcome is not known (transport loss, cancel failure, unconfirmed tx). Exposure and
+    # reservations are retained and the route is quarantined until the leg is resolved by lookup/recovery.
+    UNKNOWN = "unknown"
+    # Every leg is resolved but a confirmed fill lacks an authoritative value (cost, fee, gas). No realized
+    # P&L is booked until an operator or reconciliation supplies it.
+    UNRECONCILED = "unreconciled"
+
+
+# Trade statuses that still own exposure / reservations and must be recovered after a restart.
+UNRESOLVED_TRADE_STATUSES = ("pending", "executing", "recovering", "unknown")
 
 
 class OrderStatus(str, Enum):
     NEW = "new"
+    SUBMITTING = (
+        "submitting"  # durable intent exists; the transport call may or may not have reached the venue
+    )
+    UNKNOWN = "unknown"  # the venue may hold this order/tx; never treat as unfilled until resolved
+    CANCEL_PENDING = "cancel_pending"  # cancel requested but not confirmed; fills may still arrive
     OPEN = "open"
-    PARTIALLY_FILLED = "partially_filled"
+    PARTIALLY_FILLED = "partially_filled"  # FINAL partial fill (remainder cancelled/expired); working = OPEN
     FILLED = "filled"
     CANCELLED = "cancelled"
     REJECTED = "rejected"
@@ -127,6 +142,8 @@ class CircuitBreakerReason(str, Enum):
     ONE_LEG_FILL = "one_leg_fill"
     DAILY_LOSS_LIMIT = "daily_loss_limit"
     MANUAL = "manual"
+    # an order/transaction outcome is unknown: the venue is quarantined until the journal resolves it
+    UNRESOLVED_ORDER = "unresolved_order"
 
 
 class Chain(str, Enum):

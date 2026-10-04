@@ -29,6 +29,7 @@ class GatewayError(Exception):
         self.status = status
         self.code = code
         self.payload = payload or {}
+        self.transport_ambiguous = False
 
     @property
     def retryable(self) -> bool:
@@ -138,7 +139,12 @@ class GatewayClient:
         try:
             r = await self._client.request(method, path, params=params, json=json)
         except httpx.HTTPError as exc:
-            raise GatewayError(f"gateway unreachable: {exc}", status=503) from exc
+            err = GatewayError(f"gateway unreachable: {exc}", status=503)
+            # A connect failure means the request never left this process. Anything else (read timeout,
+            # dropped connection mid-response) may have been processed by Gateway: the caller must treat a
+            # state-changing POST as having an UNKNOWN outcome.
+            err.transport_ambiguous = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+            raise err from exc
         finally:
             self.last_latency_ms = (time.perf_counter() - t0) * 1000
         if r.status_code >= 400:

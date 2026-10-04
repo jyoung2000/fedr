@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -28,6 +29,34 @@ from fedr.marketdata.gas import GasOracle
 from fedr.marketdata.hub import MarketDataHub
 
 
+class AdmissionGate:
+    """The ONE final admission boundary for every risk-increasing submission (invariant B).
+
+    * ``lock`` serialises the final check + reservation + durable journal write of every executor, so
+      capacity and reservations cannot be over-committed by concurrent requests.
+    * ``generation`` is bumped whenever the connector set / mode is rebuilt; an admission taken under an
+      older generation is refused (structural changes never swap a connector under active work).
+    * ``recovery_complete`` is the startup barrier: nothing is admitted until the journal of unfinished
+      work has been resolved or quarantined.
+
+    Linearization point of an emergency stop: the synchronous re-check performed after the journal write and
+    immediately before the transport tasks are created (no await in between). A stop that happens before it
+    prevents the submission; a pair admitted before it is submitted as a pair and then monitored/reconciled.
+    """
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.generation = 0
+        # Open by default for engine-level use (tests, tools); the application composition root closes it
+        # before connectors are built and opens it only after journal recovery (FedrApp.start).
+        self.recovery_complete = True
+        self.recovery_note = ""
+
+    def bump(self) -> int:
+        self.generation += 1
+        return self.generation
+
+
 @dataclass
 class EngineContext:
     env: EnvSettings
@@ -50,6 +79,57 @@ class EngineContext:
     unhedged_since_ms: int | None = None
     flash_loan_simulator: Callable[..., Any] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    admission: AdmissionGate = field(default_factory=AdmissionGate)
+
+    async def book_realized(self, net_usd: Decimal, source: str) -> None:
+        """Single path that updates the in-memory daily realized P&L and enforces the daily-loss limit
+        immediately (spot trades, flash loans and carry closes all go through here)."""
+        from fedr.core.enums import CircuitBreakerReason
+        from fedr.core.money import fmt_money
+
+        self.daily_pnl_usd += net_usd
+        if self.daily_pnl_usd <= -self.settings.risk.max_daily_loss_usd:
+            await self.breakers.trip(
+                CircuitBreakerReason.DAILY_LOSS_LIMIT,
+                f"daily realized loss {fmt_money(self.daily_pnl_usd)} reached the hard limit (last: {source})",
+                auto=True,
+            )
+
+    def admission_block(
+        self,
+        *,
+        generation: int,
+        mode: TradingMode,
+        risk_increasing: bool = True,
+        venues: tuple[str, ...] = (),
+        chains: tuple[str, ...] = (),
+        strategy: str | None = None,
+        symbol: str | None = None,
+        count_capacity: bool = True,
+    ) -> str | None:
+        """Synchronous final admission check (call only while holding ``admission.lock``)."""
+        if not self.admission.recovery_complete:
+            return f"startup recovery has not completed ({self.admission.recovery_note})"
+        if self.mode is not mode or self.admission.generation != generation:
+            return "mode or venue configuration changed while the trade was being prepared"
+        if not risk_increasing:
+            return None
+        if self.emergency_stop:
+            return "EMERGENCY STOP is active"
+        if self.settings.general.shadow_mode:
+            return "shadow mode: evaluation only, nothing submitted"
+        if mode is TradingMode.LIVE and not self.settings.live.activated:
+            return "live trading is not activated"
+        if count_capacity and len(self.open_trade_ids) >= self.settings.risk.max_concurrent_trades:
+            return "max concurrent trades reached"
+        reasons: list[str] = []
+        for v in venues or (None,):
+            reasons += self.breakers.blocks(venue=v, strategy=strategy, symbol=symbol)
+        for c in chains:
+            reasons += self.breakers.blocks(chain=c)
+        if reasons:
+            return reasons[0]
+        return None
 
     # ---- derived helpers ---------------------------------------------------------------
     @property

@@ -54,6 +54,9 @@ class CircuitBreakerManager:
             return True
         return any(b.scope == scope for b in self._active.values())
 
+    # breakers scoped to a strategy family ("strategy:carry") apply to every member strategy
+    STRATEGY_FAMILIES = {"spot_perp": "carry", "funding": "carry", "basis": "carry"}
+
     def blocks(
         self,
         venue: str | None = None,
@@ -62,6 +65,11 @@ class CircuitBreakerManager:
         symbol: str | None = None,
     ) -> list[str]:
         out = []
+        strategy_scopes = (
+            {f"strategy:{strategy}", f"strategy:{self.STRATEGY_FAMILIES.get(strategy, strategy)}"}
+            if strategy
+            else set()
+        )
         for b in self._active.values():
             if b.scope == "global":
                 out.append(f"circuit breaker active: {b.reason.value} ({b.detail})")
@@ -69,7 +77,7 @@ class CircuitBreakerManager:
                 out.append(f"circuit breaker on {venue}: {b.reason.value} ({b.detail})")
             elif chain and b.scope == f"chain:{chain}":
                 out.append(f"circuit breaker on chain {chain}: {b.reason.value} ({b.detail})")
-            elif strategy and b.scope == f"strategy:{strategy}":
+            elif strategy and b.scope in strategy_scopes:
                 out.append(f"circuit breaker on strategy {strategy}: {b.reason.value}")
             elif symbol and b.scope == f"symbol:{symbol}":
                 out.append(f"circuit breaker on {symbol}: {b.reason.value} ({b.detail})")

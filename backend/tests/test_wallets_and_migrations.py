@@ -231,9 +231,9 @@ def test_migration_upgrades_a_first_release_database(tmp_path):
         await eng.dispose()
         db = Database(url)
         applied = await db.init()
-        assert applied == [2]
+        assert applied == [2, 3]
         repo = Repo(db)
-        assert await repo.schema_version() == 2
+        assert await repo.schema_version() == 3
         assert (await repo.get_settings_doc("app")) == {}
         assert await db.init() == []  # idempotent
         await db.close()

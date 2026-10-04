@@ -112,9 +112,11 @@ def test_order_status_mapping_and_fee_conversion():
     )
     res = OrderResult(request=req, order_id="1", status=OrderStatus.NEW)
     c._apply_order(res, {"id": "1", "status": "open", "filled": 0.5, "remaining": 1.5, "average": 149.9})
-    assert res.status is OrderStatus.PARTIALLY_FILLED and res.filled == D("0.5")
+    # still working with a partial fill: OPEN (non-terminal), never a final state
+    assert res.status is OrderStatus.OPEN and res.filled == D("0.5") and not res.is_terminal
     c._apply_order(res, {"id": "1", "status": "canceled", "filled": 0.5, "remaining": 1.5})
-    assert res.status is OrderStatus.PARTIALLY_FILLED  # cancelled after a partial fill keeps the fill
+    # cancelled after a partial fill keeps the fill and is a FINAL partial fill
+    assert res.status is OrderStatus.PARTIALLY_FILLED and res.is_terminal
     res2 = OrderResult(request=req, order_id="2", status=OrderStatus.NEW)
     c._apply_order(
         res2,
@@ -140,10 +142,40 @@ def test_order_status_mapping_and_fee_conversion():
         and res2.fills[0].fee_asset == "USDC"
         and res2.fee_quote == D("0.78")
     )
-    # fee in base asset converts at fill price; fee in a third asset falls back to the schedule and is flagged
-    assert c._fee_to_quote(D("0.01"), "SOL", res2, D("150")) == D("1.5")
-    assert c._fee_to_quote(D("0.001"), "KFEE", res2, D("150")) == res2.quote_amount * D("0.26") / 100
-    assert res2.raw["fee_asset_unconverted"] == "KFEE"
+    assert res2.fee_known and res2.quote_value == D("300.2")
+    # fee in base asset converts at the fill price
+    res3 = OrderResult(request=req, order_id="3", status=OrderStatus.NEW)
+    c._apply_order(
+        res3,
+        {
+            "id": "3",
+            "status": "closed",
+            "filled": 2,
+            "remaining": 0,
+            "trades": [{"id": "t3", "amount": 2, "price": 150, "fee": {"cost": 0.01, "currency": "SOL"}}],
+        },
+    )
+    assert res3.fee_quote == D("1.5")
+    # a fee in a third asset is NOT replaced by a schedule estimate: it stays in its own asset, is flagged,
+    # and accounting converts it with a price index - or reports it as missing
+    res4 = OrderResult(request=req, order_id="4", status=OrderStatus.NEW)
+    c._apply_order(
+        res4,
+        {
+            "id": "4",
+            "status": "closed",
+            "filled": 2,
+            "remaining": 0,
+            "trades": [{"id": "t4", "amount": 2, "price": 150, "fee": {"cost": 0.001, "currency": "KFEE"}}],
+        },
+    )
+    assert res4.fee_quote == 0 and res4.raw["fee_asset_unconverted"] == "KFEE" and res4.fee_known
+    from fedr.engine.accounting import leg_value
+
+    priced = leg_value(res4, D("1"), lambda a: D("600") if a == "KFEE" else None)
+    assert priced.fee_usd == D("0.6") and not priced.missing
+    unpriced = leg_value(res4, D("1"), lambda a: None)
+    assert unpriced.fee_usd is None and "no USD price" in unpriced.missing[0]
     asyncio.run(c.exchange.close())
 
 

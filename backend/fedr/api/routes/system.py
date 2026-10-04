@@ -268,7 +268,11 @@ async def readiness_strategies(app=Depends(require_app)):
 
 @router.post("/system/live/deactivate")
 async def deactivate_live(app=Depends(require_app)):
-    await app.deactivate_live()
+    try:
+        await app.deactivate_live()
+    except ValueError as exc:
+        # e.g. open live positions / unresolved live orders: leaving LIVE would orphan their monitoring
+        raise HTTPException(409, str(exc)) from exc
     return {"ok": True, "mode": app.mode.value}
 
 
