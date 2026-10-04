@@ -799,13 +799,21 @@ class Repo:
                 ).scalars()
             )
 
+    async def pending_withdrawals(self, mode: TradingMode) -> list[Withdrawal]:
+        """Signed / broadcast / unknown withdrawals whose on-chain outcome is not yet recorded."""
+        async with self.db.session() as s:
+            q = select(Withdrawal).where(
+                Withdrawal.mode == mode.value, Withdrawal.status.in_(["signed", "broadcast", "unknown"])
+            )
+            return list((await s.execute(q)).scalars())
+
     async def recent_withdrawals_to(self, destination: str, minutes: int) -> list[Withdrawal]:
         cutoff = utcnow() - timedelta(minutes=minutes)
         async with self.db.session() as s:
             q = select(Withdrawal).where(
                 Withdrawal.destination == destination,
                 Withdrawal.requested_at >= cutoff,
-                Withdrawal.status.in_(["requested", "broadcast", "confirmed"]),
+                Withdrawal.status.in_(["requested", "signed", "broadcast", "unknown", "confirmed"]),
             )
             return list((await s.execute(q)).scalars())
 

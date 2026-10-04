@@ -146,15 +146,37 @@ class WithdrawalQuote:
     is_token: bool = False
 
 
+def is_rpc_rejection(exc: BaseException) -> bool:
+    """A JSON-RPC error RESPONSE (web3 raises ValueError subclasses for those) proves the node refused the
+    transaction. Transport errors / timeouts do not: the transaction may have been propagated."""
+    return isinstance(exc, ValueError) and not isinstance(exc, TimeoutError)
+
+
+class WithdrawalUncertain(Exception):
+    """The signed withdrawal may have been broadcast: its outcome must be resolved by hash, not retried."""
+
+    def __init__(self, tx_hash: str, detail: str):
+        super().__init__(f"outcome unknown for {tx_hash}: {detail}")
+        self.tx_hash = tx_hash
+
+
 class WithdrawalService:
     """Builds and signs withdrawal transactions with the bot wallet key (server-side only)."""
 
     def __init__(
-        self, wallet_manager, env, price_usd, token_registry: dict[str, dict[str, dict]] | None = None
+        self,
+        wallet_manager,
+        env,
+        price_usd,
+        token_registry: dict[str, dict[str, dict]] | None = None,
+        nonces=None,
     ):
+        from fedr.wallets.nonce import NonceManager
+
         self.wm = wallet_manager
         self.env = env
         self.price_usd = price_usd
+        self.nonces = nonces or NonceManager()
         # chain -> asset -> {"address": mint/contract, "decimals": n}
         self.token_registry = token_registry or {}
 
@@ -252,8 +274,17 @@ class WithdrawalService:
         )
 
     async def execute(
-        self, chain: Chain, wallet_id: str, asset: str, amount: Decimal, destination: str
+        self,
+        chain: Chain,
+        wallet_id: str,
+        asset: str,
+        amount: Decimal,
+        destination: str,
+        on_signed=None,
     ) -> dict[str, Any]:
+        """Sign and broadcast. ``on_signed(tx_hash)`` is awaited after signing and BEFORE broadcasting so
+        the caller can journal the hash; an error after that point raises :class:`WithdrawalUncertain`
+        (the transaction may be on the network), never a plain failure."""
         err = validate_destination(chain, destination)
         if err:
             raise ValueError(err)
@@ -262,8 +293,43 @@ class WithdrawalService:
             raise ValueError(f"no RPC configured for {chain.value}")
         is_token = asset.upper() != chain.native_token
         if chain is Chain.SOLANA:
-            return await self._send_solana(rpc, wallet_id, asset, amount, destination, is_token)
-        return await self._send_evm(chain, rpc, wallet_id, asset, amount, destination, is_token)
+            return await self._send_solana(rpc, wallet_id, asset, amount, destination, is_token, on_signed)
+        return await self._send_evm(chain, rpc, wallet_id, asset, amount, destination, is_token, on_signed)
+
+    async def check_status(self, chain: Chain, tx_hash: str) -> dict[str, Any] | None:
+        """Receipt lookup: {"status": "confirmed"|"failed", "fee_native": str} or None while pending."""
+        rpc = self.rpc_for(chain)
+        if not rpc:
+            return None
+        if chain is Chain.SOLANA:
+            from solana.rpc.async_api import AsyncClient
+            from solders.signature import Signature
+
+            client = AsyncClient(rpc)
+            try:
+                r = await client.get_transaction(
+                    Signature.from_string(tx_hash), max_supported_transaction_version=0
+                )
+            finally:
+                await client.close()
+            if r.value is None:
+                return None
+            meta = r.value.transaction.meta
+            return {
+                "status": "failed" if meta.err is not None else "confirmed",
+                "fee_native": str(Decimal(meta.fee) / Decimal(10**9)),
+            }
+        from web3 import AsyncHTTPProvider, AsyncWeb3
+
+        w3 = AsyncWeb3(AsyncHTTPProvider(rpc))
+        try:
+            rc = await w3.eth.get_transaction_receipt(tx_hash)
+        except Exception:
+            return None
+        if rc is None:
+            return None
+        fee = D(int(rc["gasUsed"]) * int(rc.get("effectiveGasPrice", 0))) / Decimal(10**18)
+        return {"status": "confirmed" if int(rc["status"]) == 1 else "failed", "fee_native": str(fee)}
 
     # ---- EVM ----------------------------------------------------------------------------------
     def build_evm_tx(
@@ -319,6 +385,7 @@ class WithdrawalService:
         amount: Decimal,
         destination: str,
         is_token: bool,
+        on_signed=None,
     ) -> dict[str, Any]:
         from web3 import AsyncHTTPProvider, AsyncWeb3
 
@@ -329,23 +396,44 @@ class WithdrawalService:
             raise ValueError(
                 f"RPC chain id {chain_id} does not match {chain.value} ({CHAIN_IDS[chain]}) - refusing to send on the wrong network"
             )
-        nonce = await w3.eth.get_transaction_count(acct.address)
         gas_price = await w3.eth.gas_price
-        tx = self.build_evm_tx(chain, acct.address, asset, amount, destination, nonce, gas_price, is_token)
-        tx.pop("from", None)
-        if is_token:
-            tx["gas"] = int((await w3.eth.estimate_gas({**tx, "from": acct.address})) * 1.2)
-        signed = acct.sign_transaction(tx)
-        tx_hash = await w3.eth.send_raw_transaction(signed.raw_transaction)
+        async with self.nonces.lease(w3, chain.value, acct.address) as lease:
+            tx = self.build_evm_tx(
+                chain, acct.address, asset, amount, destination, lease.nonce, gas_price, is_token
+            )
+            tx.pop("from", None)
+            if is_token:
+                tx["gas"] = int((await w3.eth.estimate_gas({**tx, "from": acct.address})) * 1.2)
+            signed = acct.sign_transaction(tx)
+            tx_hash = "0x" + signed.hash.hex().removeprefix("0x")
+            if on_signed is not None:
+                await on_signed(tx_hash)  # journaled before it can reach the network
+            try:
+                await w3.eth.send_raw_transaction(signed.raw_transaction)
+            except Exception as exc:
+                if is_rpc_rejection(exc):
+                    # the node answered with a JSON-RPC error: not broadcast, the nonce stays free
+                    raise ValueError(f"node rejected the transaction: {exc}") from exc
+                lease.mark_used()
+                raise WithdrawalUncertain(tx_hash, str(exc)) from exc
+            lease.mark_used()
         return {
-            "tx_hash": tx_hash.hex(),
+            "tx_hash": tx_hash,
             "chain": chain.value,
-            "fee_native": str(D(gas_price) * tx["gas"] / Decimal(10**18)),
+            # upper bound (gas limit x price); the actual fee is read from the receipt on confirmation
+            "fee_native_max": str(D(gas_price) * tx["gas"] / Decimal(10**18)),
         }
 
     # ---- Solana ---------------------------------------------------------------------------------
     async def _send_solana(
-        self, rpc: str, wallet_id: str, asset: str, amount: Decimal, destination: str, is_token: bool
+        self,
+        rpc: str,
+        wallet_id: str,
+        asset: str,
+        amount: Decimal,
+        destination: str,
+        is_token: bool,
+        on_signed=None,
     ) -> dict[str, Any]:
         from solana.rpc.async_api import AsyncClient
         from solders.message import Message
@@ -402,7 +490,13 @@ class WithdrawalService:
             sim = await client.simulate_transaction(tx)
             if sim.value.err is not None:
                 raise ValueError(f"simulation failed: {sim.value.err}")
-            sig = await client.send_transaction(tx)
-            return {"tx_hash": str(sig.value), "chain": "solana", "fee_native": "0.000005"}
+            sig = str(tx.signatures[0])
+            if on_signed is not None:
+                await on_signed(sig)
+            try:
+                await client.send_transaction(tx)
+            except Exception as exc:
+                raise WithdrawalUncertain(sig, str(exc)) from exc
+            return {"tx_hash": sig, "chain": "solana", "fee_native_max": "0.000005"}
         finally:
             await client.close()

@@ -83,6 +83,17 @@ CONTRACT_ABI: list[dict[str, Any]] = [
         "outputs": [],
     },
     {
+        "type": "event",
+        "name": "ArbitrageExecuted",
+        "anonymous": False,
+        "inputs": [
+            {"name": "asset", "type": "address", "indexed": True},
+            {"name": "amount", "type": "uint256", "indexed": False},
+            {"name": "premium", "type": "uint256", "indexed": False},
+            {"name": "profit", "type": "uint256", "indexed": False},
+        ],
+    },
+    {
         "type": "function",
         "name": "paused",
         "stateMutability": "view",
@@ -108,11 +119,17 @@ class SimulationResult:
 
 
 class FlashLoanEngine:
-    def __init__(self, ctx, wallets, env):
+    def __init__(self, ctx, wallets, env, executor=None, nonces=None):
+        from fedr.wallets.nonce import NonceManager
+
         self.ctx = ctx
         self.wallets = wallets
         self.env = env
+        self.executor = executor  # shared journal / unresolved tracking
+        self.nonces = nonces or NonceManager()
         self.last_simulation: dict[str, SimulationResult] = {}
+        if executor is not None:
+            executor.flash_resolver = self.resolve
 
     # ------------------------------------------------------------------ availability
     def available_on(self, chain: Chain) -> tuple[bool, str]:
@@ -123,6 +140,15 @@ class FlashLoanEngine:
             return False, f"chain {chain.value} not enabled for flash loans"
         if self.ctx.mode in (TradingMode.SIMULATION, TradingMode.PAPER):
             return True, "simulated atomic execution"
+        if self.ctx.mode is TradingMode.TESTNET:
+            # pool addresses and chain ids below are MAINNET values; no testnet deployment map exists
+            return False, "flash loans are not supported in TESTNET mode (no testnet pool/contract map)"
+        if not self.env.flashloan_approved_codehash_for(chain.value):
+            return (
+                False,
+                f"mainnet flash execution is gated: set FEDR_FLASHLOAN_APPROVED_CODEHASH_{chain.value.upper()} "
+                "to the runtime code hash that passed fork validation and independent review",
+            )
         if not self.env.flashloan_contract_for(chain.value):
             return (
                 False,
@@ -228,6 +254,7 @@ class FlashLoanEngine:
     async def execute(self, opp: Opportunity, opportunity_engine, trigger: str = "auto") -> TradeRecord:
         ctx = self.ctx
         s = ctx.settings
+        gen0, mode0 = ctx.admission.generation, ctx.mode
         tr = TradeRecord(
             id=new_id("fltrd"),
             mode=ctx.mode,
@@ -241,8 +268,11 @@ class FlashLoanEngine:
             estimated_net=opp.profit.expected_net_profit,
             estimated_worst_case=opp.profit.worst_case_profit,
             estimated_costs=opp.profit.expected_costs.as_dict(),
+            extra={"no_hedge": True, "trigger": trigger},
         )
         tr.log("start", trigger=trigger)
+        if not ctx.admission.recovery_complete:
+            return await self._abort(tr, "startup recovery has not completed")
         if ctx.emergency_stop:
             return await self._abort(tr, "EMERGENCY STOP is active")
         if not s.flash_loan.enabled:
@@ -262,37 +292,67 @@ class FlashLoanEngine:
             fresh.profit.worst_case_profit,
         )
         tr.estimated_costs = fresh.profit.expected_costs.as_dict()
-        ctx.open_trade_ids.add(tr.id)
-        tr.status = TradeStatus.EXECUTING
+        tr.extra["quote_asset"] = fresh.quote
+        chain = fresh.buy.chain
+        async with ctx.admission.lock:
+            block = ctx.admission_block(
+                generation=gen0,
+                mode=mode0,
+                venues=(fresh.buy.venue, fresh.sell.venue),
+                chains=(chain.value,) if chain else (),
+                strategy=Strategy.FLASH_LOAN.value,
+                symbol=fresh.pair,
+            )
+            if block is None:
+                ctx.open_trade_ids.add(tr.id)
+                tr.status = TradeStatus.EXECUTING
+        if block is not None:
+            return await self._abort(tr, block)
         try:
             if ctx.mode in (TradingMode.SIMULATION, TradingMode.PAPER):
                 await self._settle_paper(tr, fresh)
+                await self._book(tr, fresh.quote)
             else:
-                await self._broadcast(tr, fresh, cand)
-            outcome = compute_outcome(tr, ctx.price_usd(fresh.quote) or Decimal("1"), tr.estimated_costs)
-            apply_outcome(tr, outcome)
-            if tr.status is TradeStatus.FILLED:
-                tr.explanation = f"Atomic flash-loan arbitrage executed: estimated net {fmt_money(tr.estimated_net)}, realized net {fmt_money(outcome.actual_net)} after gas {fmt_money(outcome.gas)}."
-            if ctx.repo:
-                await ctx.repo.save_trade(tr)
-                if tr.actual_net is not None and tr.status is TradeStatus.FILLED:
-                    await ctx.repo.add_pnl(
-                        ctx.mode,
-                        gross=outcome.actual_gross,
-                        trading_fees=outcome.trading_fees,
-                        gas=outcome.gas,
-                        net=outcome.actual_net,
-                        win=outcome.actual_net > 0,
-                    )
-                await ctx.repo.audit(
-                    ctx.mode, "execution", tr.explanation, {"trade_id": tr.id, "status": tr.status.value}
-                )
-            if tr.actual_net is not None:
-                ctx.daily_pnl_usd += tr.actual_net
+                await self._broadcast(tr, fresh, cand, gen0)
         finally:
-            tr.completed_at_ms = now_ms()
-            ctx.open_trade_ids.discard(tr.id)
+            if tr.status is not TradeStatus.UNKNOWN:
+                tr.completed_at_ms = tr.completed_at_ms or now_ms()
+                ctx.open_trade_ids.discard(tr.id)
         return tr
+
+    async def _book(self, tr: TradeRecord, quote: str) -> None:
+        """Authoritative accounting of a settled flash trade (legs carry the decoded on-chain amounts)."""
+        ctx = self.ctx
+        qpx = ctx.price_usd(quote)
+        outcome = compute_outcome(tr, qpx or Decimal("1"), tr.estimated_costs, price_usd=ctx.price_usd)
+        if qpx is None:
+            outcome.complete = False
+            outcome.missing.append(f"no USD price for {quote}")
+        apply_outcome(tr, outcome)
+        booked = None
+        if tr.status is TradeStatus.FILLED and tr.actual_net is not None:
+            booked = tr.actual_net
+            tr.explanation = f"Atomic flash-loan arbitrage executed: estimated net {fmt_money(tr.estimated_net)}, realized net {fmt_money(outcome.actual_net)} after gas {fmt_money(outcome.gas)}."
+        elif tr.status is TradeStatus.FAILED and outcome.complete and outcome.gas > 0:
+            booked = -outcome.gas  # a reverted transaction still burns gas: a realized loss
+        if booked is not None:
+            await ctx.book_realized(booked, f"flash {tr.id}")
+        if ctx.repo:
+            await ctx.repo.save_trade(tr)
+            if booked is not None:
+                await ctx.repo.add_pnl(
+                    ctx.mode,
+                    gross=outcome.actual_gross if tr.status is TradeStatus.FILLED else ZERO,
+                    trading_fees=outcome.trading_fees if tr.status is TradeStatus.FILLED else ZERO,
+                    gas=outcome.gas,
+                    net=booked,
+                    win=booked > 0,
+                )
+            await ctx.repo.audit(
+                ctx.mode, "execution", tr.explanation, {"trade_id": tr.id, "status": tr.status.value}
+            )
+        if self.executor is not None and self.executor.on_settled is not None:
+            await self.executor.on_settled(tr)
 
     async def _settle_paper(self, tr: TradeRecord, fresh: Opportunity) -> None:
         ctx = self.ctx
@@ -303,44 +363,19 @@ class FlashLoanEngine:
         gas_usd = fresh.gas.expected_gas_cost_usd if fresh.gas else ZERO
         profit = proceeds - loan - fee
         base, quote = fresh.pair.split("/")
-        buy_req = OrderRequest(
-            venue=fresh.buy.venue,
-            symbol=fresh.pair,
-            side=OrderSide.BUY,
-            amount=fresh.size_base,
-            limit_price=fresh.buy.avg_price,
-            extra={"quoted_price": str(fresh.buy.avg_price), "flash_loan": True},
-        )
-        sell_req = OrderRequest(
-            venue=fresh.sell.venue,
-            symbol=fresh.pair,
-            side=OrderSide.SELL,
-            amount=fresh.size_base,
-            limit_price=fresh.sell.avg_price,
-            extra={"quoted_price": str(fresh.sell.avg_price), "flash_loan": True},
-        )
+        buy_req, sell_req = self._requests(fresh)
         tr.buy = OrderResult(
             request=buy_req,
             order_id=new_id("fl"),
             status=OrderStatus.FILLED,
             filled=fresh.size_base,
             avg_price=fresh.buy.avg_price,
+            cost=loan,
+            fee_items=[(fee, quote)],
+            fees_complete=True,
             fee_quote=fee,
             gas_cost_usd=gas_usd,
             tx_hash=f"paper-flash-{tr.id}",
-        )
-        tr.buy.fills.append(
-            Fill(
-                order_id=tr.buy.order_id,
-                venue=fresh.buy.venue,
-                symbol=fresh.pair,
-                side=OrderSide.BUY,
-                amount=fresh.size_base,
-                price=fresh.buy.avg_price,
-                fee_amount=fee,
-                fee_asset=quote,
-                gas_cost_usd=gas_usd,
-            )
         )
         tr.sell = OrderResult(
             request=sell_req,
@@ -348,20 +383,24 @@ class FlashLoanEngine:
             status=OrderStatus.FILLED,
             filled=fresh.size_base,
             avg_price=fresh.sell.avg_price,
+            cost=proceeds,
+            fees_complete=True,
             tx_hash=f"paper-flash-{tr.id}",
         )
-        tr.sell.fills.append(
-            Fill(
-                order_id=tr.sell.order_id,
-                venue=fresh.sell.venue,
-                symbol=fresh.pair,
-                side=OrderSide.SELL,
-                amount=fresh.size_base,
-                price=fresh.sell.avg_price,
-                fee_amount=ZERO,
-                fee_asset=quote,
+        for leg in (tr.buy, tr.sell):
+            leg.fills.append(
+                Fill(
+                    order_id=leg.order_id,
+                    venue=leg.request.venue,
+                    symbol=fresh.pair,
+                    side=leg.request.side,
+                    amount=fresh.size_base,
+                    price=leg.cost / fresh.size_base,
+                    fee_amount=fee if leg is tr.buy else ZERO,
+                    fee_asset=quote,
+                    gas_cost_usd=gas_usd if leg is tr.buy else None,
+                )
             )
-        )
         tr.status = TradeStatus.FILLED
         if ctx.ledger is not None and chain is not None:
             await ctx.ledger.adjust(chain.value, quote, profit, allow_negative=True)
@@ -370,80 +409,15 @@ class FlashLoanEngine:
                 await ctx.ledger.charge_gas(chain.value, chain.native_token, gas_usd / px)
         tr.log("paper_atomic_settled", loan=loan, fee=fee, proceeds=proceeds, profit=profit, gas_usd=gas_usd)
 
-    async def _broadcast(self, tr: TradeRecord, fresh: Opportunity, cand) -> None:
-        from web3 import AsyncHTTPProvider, AsyncWeb3
-
-        chain = fresh.buy.chain
-        s = self.ctx.settings
-        rpc = self.env.rpc_for(chain.value)
-        private_rpc = (
-            self.env.evm_private_rpc
-            if (s.mev.enabled and s.mev.evm_private_submission and chain is Chain.ETHEREUM)
-            else None
-        )
-        wallet = self.wallets.bot_wallet("evm")
-        if wallet is None:
-            tr.status = TradeStatus.ABORTED
-            tr.explanation = "Aborted: no EVM bot wallet"
-            return
-        acct = self.wallets.evm_account(wallet.id)
-        w3 = AsyncWeb3(AsyncHTTPProvider(rpc))
-        contract = w3.eth.contract(
-            address=w3.to_checksum_address(self.env.flashloan_contract_for(chain.value)), abi=CONTRACT_ABI
-        )
-        params = self._build_params(cand, fresh.buy, fresh.sell)
-        if params is None:
-            tr.status = TradeStatus.ABORTED
-            tr.explanation = "Aborted: route cannot be encoded for the contract"
-            return
-        asset, amount, p = params
-        fn = contract.functions.executeArbitrage(asset, amount, p)
-        # final simulation immediately before broadcast (abort-before-broadcast on any drift)
-        try:
-            await fn.call({"from": acct.address})
-            gas = await fn.estimate_gas({"from": acct.address})
-        except Exception as exc:
-            tr.status = TradeStatus.ABORTED
-            tr.explanation = f"Aborted before broadcast: final simulation reverted ({str(exc)[:160]})"
-            tr.log("abort_pre_broadcast", error=str(exc)[:200])
-            return
-        fee_hist = await w3.eth.fee_history(5, "latest", [50])
-        base_fee = int(fee_hist["baseFeePerGas"][-1])
-        priority = min(
-            int(D(s.gas.max_priority_fee_gwei) * Decimal(10**9)),
-            int(fee_hist["reward"][-1][0]) if fee_hist.get("reward") else int(1e9),
-        )
-        max_fee = base_fee * 2 + priority
-        if Decimal(max_fee) / Decimal(10**9) > s.gas.max_gas_price_gwei:
-            tr.status = TradeStatus.ABORTED
-            tr.explanation = "Aborted before broadcast: gas price above the configured maximum"
-            return
-        tx = await fn.build_transaction(
-            {
-                "from": acct.address,
-                "nonce": await w3.eth.get_transaction_count(acct.address),
-                "gas": int(gas * 1.15),
-                "maxFeePerGas": max_fee,
-                "maxPriorityFeePerGas": priority,
-                "chainId": await w3.eth.chain_id,
-            }
-        )
-        signed = acct.sign_transaction(tx)
-        sender = AsyncWeb3(AsyncHTTPProvider(private_rpc)) if private_rpc else w3
-        tx_hash = await sender.eth.send_raw_transaction(signed.raw_transaction)
-        tr.log("broadcast", tx=tx_hash.hex(), private=bool(private_rpc))
-        receipt = await w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
-        gas_used = int(receipt["gasUsed"])
-        eff = int(receipt.get("effectiveGasPrice", max_fee))
-        native_px = self.ctx.price_usd(chain.native_token) or ZERO
-        gas_usd = Decimal(gas_used * eff) / Decimal(10**18) * native_px
-        base, quote = fresh.pair.split("/")
+    @staticmethod
+    def _requests(fresh: Opportunity) -> tuple[OrderRequest, OrderRequest]:
         buy_req = OrderRequest(
             venue=fresh.buy.venue,
             symbol=fresh.pair,
             side=OrderSide.BUY,
             amount=fresh.size_base,
             limit_price=fresh.buy.avg_price,
+            client_order_id=new_id("flb"),
             extra={"quoted_price": str(fresh.buy.avg_price), "flash_loan": True},
         )
         sell_req = OrderRequest(
@@ -452,53 +426,222 @@ class FlashLoanEngine:
             side=OrderSide.SELL,
             amount=fresh.size_base,
             limit_price=fresh.sell.avg_price,
+            client_order_id=new_id("fls"),
             extra={"quoted_price": str(fresh.sell.avg_price), "flash_loan": True},
         )
-        if int(receipt["status"]) != 1:
-            tr.status = TradeStatus.FAILED
-            tr.explanation = f"Transaction reverted on-chain (gas burned {fmt_money(gas_usd)})."
-            await self.ctx.breakers.trip(
-                CircuitBreakerReason.FLASH_LOAN_FAILURE,
-                f"flash-loan tx reverted on {chain.value}: {tx_hash.hex()[:12]}… gas burned {fmt_money(gas_usd)}",
-                scope="strategy:flash_loan",
+        return buy_req, sell_req
+
+    async def _w3(self, chain: Chain):
+        from web3 import AsyncHTTPProvider, AsyncWeb3
+
+        return AsyncWeb3(AsyncHTTPProvider(self.env.rpc_for(chain.value)))
+
+    async def _verify_target(self, w3, chain: Chain, contract_addr: str) -> str | None:
+        """Chain identity + approved bytecode. Returns a refusal reason or None."""
+        from fedr.wallets.transfers import CHAIN_IDS
+
+        chain_id = int(await w3.eth.chain_id)
+        if chain_id != CHAIN_IDS.get(chain):
+            return f"RPC chain id {chain_id} is not {chain.value} ({CHAIN_IDS.get(chain)})"
+        approved = self.env.flashloan_approved_codehash_for(chain.value)
+        code = await w3.eth.get_code(w3.to_checksum_address(contract_addr))
+        actual = w3.keccak(code).hex().lower()
+        if not actual.startswith("0x"):
+            actual = "0x" + actual
+        if not approved or actual != (approved if approved.startswith("0x") else "0x" + approved):
+            return f"deployed contract code hash {actual[:18]}… is not the approved, reviewed version"
+        return None
+
+    async def _broadcast(self, tr: TradeRecord, fresh: Opportunity, cand, gen0: int) -> None:
+        ctx = self.ctx
+        chain = fresh.buy.chain
+        s = ctx.settings
+        private_rpc = (
+            self.env.evm_private_rpc
+            if (s.mev.enabled and s.mev.evm_private_submission and chain is Chain.ETHEREUM)
+            else None
+        )
+        ok, why = self.available_on(chain)
+        if not ok:
+            return await self._abort_in_flight(tr, why)
+        wallet = self.wallets.bot_wallet("evm")
+        if wallet is None:
+            return await self._abort_in_flight(tr, "no EVM bot wallet")
+        acct = self.wallets.evm_account(wallet.id)
+        w3 = await self._w3(chain)
+        contract_addr = self.env.flashloan_contract_for(chain.value)
+        refusal = await self._verify_target(w3, chain, contract_addr)
+        if refusal:
+            return await self._abort_in_flight(tr, refusal)
+        contract = w3.eth.contract(address=w3.to_checksum_address(contract_addr), abi=CONTRACT_ABI)
+        params = self._build_params(cand, fresh.buy, fresh.sell)
+        if params is None:
+            return await self._abort_in_flight(tr, "route cannot be encoded for the contract")
+        asset, amount, p = params
+        fn = contract.functions.executeArbitrage(asset, amount, p)
+        # final simulation immediately before broadcast (abort-before-broadcast on any drift)
+        try:
+            await fn.call({"from": acct.address})
+            gas = await fn.estimate_gas({"from": acct.address})
+        except Exception as exc:
+            tr.log("abort_pre_broadcast", error=str(exc)[:200])
+            return await self._abort_in_flight(tr, f"final simulation reverted ({str(exc)[:160]})")
+        fee_hist = await w3.eth.fee_history(5, "latest", [50])
+        base_fee = int(fee_hist["baseFeePerGas"][-1])
+        priority = min(
+            int(D(s.gas.max_priority_fee_gwei) * Decimal(10**9)),
+            int(fee_hist["reward"][-1][0]) if fee_hist.get("reward") else int(1e9),
+        )
+        max_fee = base_fee * 2 + priority
+        if Decimal(max_fee) / Decimal(10**9) > s.gas.max_gas_price_gwei:
+            return await self._abort_in_flight(tr, "gas price above the configured maximum")
+        buy_req, sell_req = self._requests(fresh)
+        quote_dec = int(cand.buy.market(cand.pair).extra.get("quote_decimals", 6))
+        tr.extra.update(
+            {"chain": chain.value, "asset": asset, "amount_units": str(amount), "quote_decimals": quote_dec}
+        )
+        sender = await self._w3_private(private_rpc) if private_rpc else w3
+        async with self.nonces.lease(w3, chain.value, acct.address) as lease:
+            tx = await fn.build_transaction(
+                {
+                    "from": acct.address,
+                    "nonce": lease.nonce,
+                    "gas": int(gas * 1.15),
+                    "maxFeePerGas": max_fee,
+                    "maxPriorityFeePerGas": priority,
+                    "chainId": await w3.eth.chain_id,
+                }
             )
+            signed = acct.sign_transaction(tx)
+            tx_hash = "0x" + signed.hash.hex().removeprefix("0x")
+            # durable intent with the tx hash BEFORE the transaction leaves the process
             tr.buy = OrderResult(
-                request=buy_req,
-                order_id=new_id("fl"),
-                status=OrderStatus.FAILED,
-                gas_cost_usd=gas_usd,
-                tx_hash=tx_hash.hex(),
-                error="reverted",
+                request=buy_req, order_id=tx_hash, status=OrderStatus.SUBMITTING, tx_hash=tx_hash
             )
             tr.sell = OrderResult(
-                request=sell_req,
-                order_id=new_id("fl"),
-                status=OrderStatus.FAILED,
-                tx_hash=tx_hash.hex(),
-                error="reverted",
+                request=sell_req, order_id=tx_hash, status=OrderStatus.SUBMITTING, tx_hash=tx_hash
             )
-            self.ctx.failed_trades_last_hour += 1
+            try:
+                if ctx.repo:
+                    await ctx.repo.save_trade(tr)
+            except Exception as exc:
+                tr.buy = tr.sell = None
+                return await self._abort_in_flight(tr, f"intent journal write failed ({str(exc)[:80]})")
+            if ctx.emergency_stop or ctx.admission.generation != gen0:
+                tr.buy = tr.sell = None
+                return await self._abort_in_flight(tr, "stop or configuration change before broadcast")
+            try:
+                await sender.eth.send_raw_transaction(signed.raw_transaction)
+            except Exception as exc:
+                from fedr.wallets.transfers import is_rpc_rejection
+
+                if is_rpc_rejection(exc):  # the node refused it: nothing was broadcast
+                    tr.buy = tr.sell = None
+                    return await self._abort_in_flight(
+                        tr, f"node rejected the transaction ({str(exc)[:120]})"
+                    )
+                # transport failure: the node may have accepted it - unknown until the receipt lookup
+                tr.log("broadcast_error", error=str(exc)[:200])
+            lease.mark_used()
+        tr.log("broadcast", tx=tx_hash, private=bool(private_rpc))
+        try:
+            receipt = await w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
+        except Exception as exc:
+            for leg in (tr.buy, tr.sell):
+                leg.status = OrderStatus.UNKNOWN
+                leg.raw["unknown_reason"] = f"no receipt yet ({type(exc).__name__})"
+            if self.executor is not None:
+                await self.executor._hold_unknown(tr)
             return
-        # Without parsing the ArbitrageExecuted event we conservatively book the quoted legs; reconciliation adjusts.
-        tr.buy = OrderResult(
-            request=buy_req,
-            order_id=new_id("fl"),
-            status=OrderStatus.FILLED,
-            filled=fresh.size_base,
-            avg_price=fresh.buy.avg_price,
-            fee_quote=fresh.buy.quote_amount * Decimal("0.0005"),
-            gas_cost_usd=gas_usd,
-            tx_hash=tx_hash.hex(),
+        await self._apply_receipt(tr, receipt, contract, chain)
+
+    async def _w3_private(self, url: str):
+        from web3 import AsyncHTTPProvider, AsyncWeb3
+
+        return AsyncWeb3(AsyncHTTPProvider(url))
+
+    async def _apply_receipt(self, tr: TradeRecord, receipt, contract, chain: Chain) -> None:
+        """Decode the realized outcome from the receipt: gas, and the contract's ArbitrageExecuted event."""
+        ctx = self.ctx
+        gas_used = int(receipt["gasUsed"])
+        eff = int(receipt.get("effectiveGasPrice", 0))
+        native_px = ctx.price_usd(chain.native_token)
+        gas_native = Decimal(gas_used * eff) / Decimal(10**18)
+        gas_usd = gas_native * native_px if native_px is not None else ZERO
+        dec = int(tr.extra.get("quote_decimals", 6))
+        quote = tr.extra.get("quote_asset") or tr.pair.split("/")[1]
+        for leg in (tr.buy, tr.sell):
+            leg.gas_known = native_px is not None
+            leg.raw["gas_native"] = str(gas_native)
+            leg.completed_at_ms = now_ms()
+        tr.buy.gas_cost_usd = gas_usd
+        if int(receipt["status"]) != 1:
+            for leg in (tr.buy, tr.sell):
+                leg.status, leg.error, leg.fees_complete = OrderStatus.FAILED, "reverted", True
+            tr.status = TradeStatus.FAILED
+            tr.explanation = f"Transaction reverted on-chain (gas burned {fmt_money(gas_usd)})."
+            await ctx.breakers.trip(
+                CircuitBreakerReason.FLASH_LOAN_FAILURE,
+                f"flash-loan tx reverted on {chain.value}: {str(tr.buy.tx_hash)[:12]}… gas burned {fmt_money(gas_usd)}",
+                scope="strategy:flash_loan",
+            )
+            ctx.failed_trades_last_hour += 1
+            await self._book(tr, quote)
+            return
+        events = contract.events.ArbitrageExecuted().process_receipt(receipt)
+        if not events:
+            for leg in (tr.buy, tr.sell):
+                leg.status, leg.filled = OrderStatus.FILLED, tr.size_base
+                leg.fees_complete = True
+            tr.buy.raw["amounts_unknown"] = True  # cost stays None -> UNRECONCILED, never fabricated
+            await self._book(tr, quote)
+            return
+        a = events[0]["args"]
+        unit = Decimal(10**dec)
+        amount, premium, profit = D(a["amount"]) / unit, D(a["premium"]) / unit, D(a["profit"]) / unit
+        tr.buy.status = tr.sell.status = OrderStatus.FILLED
+        tr.buy.filled = tr.sell.filled = tr.size_base
+        tr.buy.cost, tr.buy.fee_items, tr.buy.fees_complete = amount, [(premium, quote)], True
+        tr.sell.cost, tr.sell.fees_complete = amount + premium + profit, True  # repaid + incremental profit
+        tr.buy.avg_price, tr.sell.avg_price = (
+            amount / tr.size_base,
+            (amount + premium + profit) / tr.size_base,
         )
-        tr.sell = OrderResult(
-            request=sell_req,
-            order_id=new_id("fl"),
-            status=OrderStatus.FILLED,
-            filled=fresh.size_base,
-            avg_price=fresh.sell.avg_price,
-            tx_hash=tx_hash.hex(),
+        tr.log("event", amount=amount, premium=premium, profit=profit)
+        await self._book(tr, quote)
+
+    async def resolve(self, tr: TradeRecord) -> None:
+        """Resolution hook for an unknown flash transaction (receipt lookup by the journaled tx hash)."""
+        chain = Chain(tr.extra.get("chain")) if tr.extra.get("chain") else None
+        if chain is None or tr.buy is None or not tr.buy.tx_hash:
+            return
+        w3 = await self._w3(chain)
+        try:
+            receipt = await w3.eth.get_transaction_receipt(tr.buy.tx_hash)
+        except Exception:
+            return  # not mined (or not found yet): stays unknown, the nonce is never reused
+        if receipt is None:
+            return
+        contract = w3.eth.contract(
+            address=w3.to_checksum_address(self.env.flashloan_contract_for(chain.value)), abi=CONTRACT_ABI
         )
-        tr.status = TradeStatus.FILLED
+        self.executor.unresolved.pop(tr.id, None)
+        await self._apply_receipt(tr, receipt, contract, chain)
+        self.ctx.open_trade_ids.discard(tr.id)
+        venues = {leg.request.venue for _r, leg in tr.legs()}
+        still = {
+            leg.request.venue for t in self.executor.unresolved.values() for _r, leg in t.unresolved_legs
+        }
+        for v in venues - still:
+            await self.ctx.breakers.reset(CircuitBreakerReason.UNRESOLVED_ORDER, scope=f"venue:{v}")
+
+    async def _abort_in_flight(self, tr: TradeRecord, reason: str) -> None:
+        tr.status = TradeStatus.ABORTED
+        tr.explanation = f"Aborted before broadcast because {reason}."
+        tr.log("abort", reason=reason)
+        if self.ctx.repo:
+            await self.ctx.repo.save_trade(tr)
+            await self.ctx.repo.audit(self.ctx.mode, "execution", tr.explanation, {"trade_id": tr.id})
 
     async def _abort(self, tr: TradeRecord, reason: str) -> TradeRecord:
         tr.status = TradeStatus.ABORTED

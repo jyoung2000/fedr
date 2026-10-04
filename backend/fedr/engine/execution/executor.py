@@ -83,6 +83,8 @@ class ExecutionEngine:
         # position manager hooks: create a carry position from a settled entry; finish a close trade
         self.carry_opener: Callable[[TradeRecord], Awaitable[object]] | None = None
         self.close_settler: Callable[[TradeRecord], Awaitable[None]] | None = None
+        # flash-loan engine hook: resolve an unknown flash transaction by receipt lookup
+        self.flash_resolver: Callable[[TradeRecord], Awaitable[None]] | None = None
 
     # ------------------------------------------------------------------ entry
     def _precheck(self, opp: Opportunity, allow_carry: bool) -> str | None:
@@ -485,6 +487,14 @@ class ExecutionEngine:
         async with self._resolve_lock:
             for tr in list(self.unresolved.values()):
                 if tr.mode is not self.ctx.mode:
+                    continue
+                if tr.strategy is Strategy.FLASH_LOAN:
+                    if self.flash_resolver is not None:
+                        try:
+                            await self.flash_resolver(tr)
+                        except Exception as exc:
+                            log.warning("flash resolution failed", trade=tr.id, error=str(exc)[:120])
+                        settled += 0 if tr.id in self.unresolved else 1
                     continue
                 changed = False
                 for _role, leg in tr.unresolved_legs:

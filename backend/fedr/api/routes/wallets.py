@@ -340,8 +340,27 @@ async def withdraw(body: WithdrawExec, app=Depends(require_app)):
             409,
             "an identical withdrawal was already submitted (idempotency key match) - check History → Withdrawals before retrying",
         )
+    from fedr.wallets.transfers import WithdrawalUncertain
+
+    async def on_signed(tx_hash: str) -> None:
+        # journal the hash before the transaction can reach the network (invariant A)
+        await app.repo.update_withdrawal(row.id, status="signed", tx_hash=tx_hash)
+
     try:
-        res = await app.withdrawals.execute(ch, w.id, body.asset.upper(), D(body.amount), body.destination)
+        res = await app.withdrawals.execute(
+            ch, w.id, body.asset.upper(), D(body.amount), body.destination, on_signed=on_signed
+        )
+    except WithdrawalUncertain as exc:
+        await app.repo.update_withdrawal(row.id, status="unknown", tx_hash=exc.tx_hash, error=str(exc)[:300])
+        await app.repo.audit(
+            app.mode,
+            "wallet",
+            f"Withdrawal outcome UNKNOWN: {body.amount} {body.asset} on {ch.value} ({exc.tx_hash}) - "
+            "do not retry; it is resolved from the chain",
+            {"withdrawal_id": row.id, "tx_hash": exc.tx_hash},
+            actor="user",
+        )
+        return {"withdrawal_id": row.id, "status": "unknown", "tx_hash": exc.tx_hash}
     except Exception as exc:
         await app.repo.update_withdrawal(row.id, status="failed", error=str(exc)[:300])
         await app.repo.audit(
@@ -352,9 +371,7 @@ async def withdraw(body: WithdrawExec, app=Depends(require_app)):
             actor="user",
         )
         raise HTTPException(400, f"withdrawal failed: {exc}") from exc
-    await app.repo.update_withdrawal(
-        row.id, status="broadcast", tx_hash=res.get("tx_hash"), fee_native=res.get("fee_native")
-    )
+    await app.repo.update_withdrawal(row.id, status="broadcast", tx_hash=res.get("tx_hash"))
     await app.repo.audit(
         app.mode,
         "wallet",

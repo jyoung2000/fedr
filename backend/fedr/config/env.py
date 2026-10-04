@@ -66,6 +66,13 @@ class EnvSettings(BaseSettings):
     flashloan_contract_optimism: str | None = None
     flashloan_contract_polygon: str | None = None
     flashloan_contract_sepolia: str | None = None
+    # LIVE flash-loan execution gate: keccak256 of the deployed runtime bytecode that passed fork validation
+    # and independent review. Broadcasts are refused unless the on-chain code hash equals this value.
+    flashloan_approved_codehash_ethereum: str | None = None
+    flashloan_approved_codehash_arbitrum: str | None = None
+    flashloan_approved_codehash_base: str | None = None
+    flashloan_approved_codehash_optimism: str | None = None
+    flashloan_approved_codehash_polygon: str | None = None
 
     telemetry_enabled: bool = False  # local-first: nothing leaves the box unless opted-in
 
@@ -82,6 +89,10 @@ class EnvSettings(BaseSettings):
 
     def flashloan_contract_for(self, chain: str) -> str | None:
         return getattr(self, f"flashloan_contract_{chain}", None)
+
+    def flashloan_approved_codehash_for(self, chain: str) -> str | None:
+        v = getattr(self, f"flashloan_approved_codehash_{chain}", None)
+        return v.lower() if v else None
 
     def validate_startup(self) -> list[str]:
         """Fail-safe configuration checks. Returns a list of fatal problems (empty = ok)."""

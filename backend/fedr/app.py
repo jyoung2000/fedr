@@ -47,6 +47,7 @@ from fedr.security.crypto import SecretBox, hash_phrase, load_or_create_master_k
 from fedr.sim.synthetic import default_synthetic, dex_pairs_for
 from fedr.sim.venues import SyntheticCexVenue, SyntheticDexVenue, SyntheticPerpVenue
 from fedr.wallets.manager import WalletManager
+from fedr.wallets.nonce import NonceManager
 from fedr.wallets.transfers import DepositMonitor, WithdrawalService
 
 CARRY_STRATEGIES = (Strategy.SPOT_PERP, Strategy.FUNDING, Strategy.BASIS)
@@ -116,6 +117,8 @@ class FedrApp:
         self.auth_token_source: str = "none"
         self.metrics = Metrics()
         self.recovery_report: dict | None = None
+        self.nonces = NonceManager()  # one EVM nonce coordinator for every signing path of this process
+        self._data_lock = None
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -126,6 +129,7 @@ class FedrApp:
                 log.error("startup configuration error", problem=pr)
             raise RuntimeError("unsafe or invalid configuration: " + "; ".join(problems))
         self.env.ensure_dirs()
+        self._acquire_data_lock()
         self.auth_token, self.auth_token_source = load_or_create_ui_token(
             self.env.auth_token, self.env.data_dir
         )
@@ -214,6 +218,37 @@ class FedrApp:
             self.mode, "system", f"Startup: {self.status_message}", self.startup_check.as_dict()
         )
 
+    def _acquire_data_lock(self) -> None:
+        """One FEDR process per data directory: the order journal, the reconciliation ledger and the EVM
+        nonce coordinator are single-process designs, so a second instance must fail loudly."""
+        import fcntl
+
+        path = self.env.data_dir / "fedr.lock"
+        fh = open(path, "a+")  # noqa: SIM115 - held for the process lifetime
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            fh.close()
+            raise RuntimeError(
+                f"another FEDR process is already using {self.env.data_dir} (lock {path}); running two "
+                "instances on one data directory is unsupported (shared journal, ledger and nonces)"
+            ) from exc
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(__import__("os").getpid()))
+        fh.flush()
+        self._data_lock = fh
+
+    def _release_data_lock(self) -> None:
+        if self._data_lock is not None:
+            import fcntl
+
+            try:
+                fcntl.flock(self._data_lock.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._data_lock.close()
+                self._data_lock = None
+
     async def stop(self) -> None:
         for t in self._tasks:
             t.cancel()
@@ -231,6 +266,7 @@ class FedrApp:
             await self.gateway.close()
         if self.db:
             await self.db.close()
+        self._release_data_lock()
 
     @property
     def mode(self) -> TradingMode:
@@ -287,14 +323,16 @@ class FedrApp:
         self.ctx.admission.recovery_note = "starting up"
         self.opportunities = OpportunityEngine(self.ctx)
         self.executor = ExecutionEngine(self.ctx, self.opportunities, on_trade=self._on_trade)
-        self.flashloan = FlashLoanEngine(self.ctx, self.wallets, self.env)
+        self.flashloan = FlashLoanEngine(self.ctx, self.wallets, self.env, self.executor, self.nonces)
         self.positions = PositionManager(self.ctx, self.executor)
         self.ctx.flash_loan_simulator = self.flashloan.simulate
         self.reconciler = Reconciler(self.ctx, self.executor)
         self.executor.on_settled = self.reconciler.record_trade
         self.reconciler.on_deposit = self._on_deposit
         self.shadow = ShadowRecorder(self.ctx)
-        self.withdrawals = WithdrawalService(self.wallets, self.env, hub.prices.get, token_registry={})
+        self.withdrawals = WithdrawalService(
+            self.wallets, self.env, hub.prices.get, token_registry={}, nonces=self.nonces
+        )
 
     async def _on_deposit(self, dep: dict) -> None:
         from fedr.wallets.transfers import DepositEvent
@@ -728,6 +766,7 @@ class FedrApp:
             try:
                 await asyncio.sleep(self.settings.advanced.reconciliation_interval_s)
                 self.ctx.extra["recent_trades"] = self.executor.recent[-20:] if self.executor else []
+                await self.track_withdrawals()
                 await self.reconciler.run_once()
                 if self.positions and self.positions.open and not self.ctx.is_simulated_execution:
                     await self.positions.reconcile(await self._venue_perp_positions())
@@ -756,6 +795,52 @@ class FedrApp:
                 f"cannot {action} while there is active work ({'; '.join(work)}): "
                 "close positions and resolve open trades first, so nothing loses its monitoring"
             )
+
+    async def track_withdrawals(self) -> None:
+        """Resolve signed / broadcast / unknown withdrawals from the chain and book them in the ledger.
+        Their chain account is deferred by reconciliation until the outcome is known."""
+        if self.repo is None or self.ctx.is_simulated_execution or self.withdrawals is None:
+            return
+        pending_accounts: set[str] = set()
+        for w in await self.repo.pending_withdrawals(self.mode):
+            chain = Chain(w.chain)
+            res = await self.withdrawals.check_status(chain, w.tx_hash) if w.tx_hash else None
+            if res is None:
+                pending_accounts.add(chain.value)
+                continue
+            fee = D(res["fee_native"])
+            await self.repo.update_withdrawal(w.id, status=res["status"], fee_native=str(fee))
+            rows = [
+                {
+                    "account": chain.value,
+                    "asset": chain.native_token,
+                    "delta": -fee,
+                    "kind": "transfer",
+                    "ref": f"withdrawal:{w.id}",
+                    "dedupe_key": f"withdrawal:{w.id}:fee",
+                    "note": f"network fee of withdrawal {w.tx_hash}",
+                }
+            ]
+            if res["status"] == "confirmed":
+                rows.append(
+                    {
+                        "account": chain.value,
+                        "asset": w.asset,
+                        "delta": -D(w.amount),
+                        "kind": "transfer",
+                        "ref": f"withdrawal:{w.id}",
+                        "dedupe_key": f"withdrawal:{w.id}:amount",
+                        "note": f"withdrawal to {w.destination} ({w.tx_hash})",
+                    }
+                )
+            await self.repo.add_ledger_entries(self.mode, rows)
+            await self.repo.audit(
+                self.mode,
+                "wallet",
+                f"Withdrawal {res['status']} on-chain: {w.amount} {w.asset} ({w.tx_hash})",
+                {"withdrawal_id": w.id, "fee_native": str(fee)},
+            )
+        self.reconciler.pending_withdrawal_accounts = pending_accounts
 
     async def _resolution_loop(self) -> None:
         """Resolve unknown order outcomes by lookup (client order id / tx hash) every few seconds."""
