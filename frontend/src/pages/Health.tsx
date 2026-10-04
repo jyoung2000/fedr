@@ -8,6 +8,7 @@ import { useAppState } from "../lib/app-state";
 import { fmtAge, fmtAmount, fmtDuration, fmtInt, fmtMoney, fmtTime, num, titleCase } from "../lib/format";
 import { usePoll } from "../lib/hooks";
 import type { HealthLive, HealthReady } from "../lib/types";
+import { ReconciliationCard } from "./ReconciliationCard";
 
 type Probe<T> = { ok: boolean; status: number; data: T | null };
 
@@ -239,6 +240,8 @@ export function Health() {
           </Card>
         </div>
       </div>
+
+      <ReconciliationCard />
     </div>
   );
 }

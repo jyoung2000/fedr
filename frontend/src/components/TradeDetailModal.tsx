@@ -14,8 +14,11 @@ export function tradeTone(status: string): Tone {
     case "aborted":
     case "cancelled":
       return "danger";
+    case "unknown": // an order outcome is unknown: capital held, venue paused
+      return "danger";
     case "recovering":
     case "partial":
+    case "unreconciled": // executed, but the venue did not report every value: no P&L booked
       return "warning";
     default:
       return "info";

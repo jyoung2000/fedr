@@ -263,6 +263,7 @@ class Scenario:
     expect_estop: bool = False
     ready_checks: dict = field(default_factory=lambda: dict(READY_OK))
     ready_code: int = 200
+    unresolved: bool = False  # an order with an unknown outcome is held (journal/quarantine panel)
 
 
 def scenarios() -> list[Scenario]:
@@ -286,7 +287,38 @@ def scenarios() -> list[Scenario]:
         Scenario("connector_degraded", status_payload("paper"), venues={"kraken": "degraded", "coinbase": "healthy", "uniswap_base": "unhealthy"}, expect_chip_texts=["CONNECTOR DEGRADED", "kraken", "CONNECTOR UNHEALTHY", "uniswap_base"]),
         Scenario("wallet_mismatch", status_payload("paper", breakers=[breaker("balance_discrepancy", "kraken USDC: expected 1000, actual 900", "kraken")]), expect_chip_texts=["WALLET MISMATCH"]),
         Scenario("position_discrepancy", status_payload("paper", breakers=[breaker("position_discrepancy", "ETHUSDT-PERP: untracked position of size 0.01", "binance")]), expect_chip_texts=["POSITION DISCREPANCY"]),
+        Scenario("unresolved_order", status_payload("testnet"), expect_chip_texts=["TESTNET"], unresolved=True),
     ]
+
+
+def unresolved_payload(sc: Scenario) -> dict:
+    items = []
+    if sc.unresolved:
+        items = [
+            {
+                "id": "trd_unknown1", "mode": "testnet", "strategy": "cex_cex", "pair": "SOL/USDC", "route": "kraken → coinbase",
+                "status": "unknown", "size_base": "1", "estimated_gross": "1.5", "estimated_net": "1.0",
+                "estimated_worst_case": "0.5", "actual_gross": None, "actual_fees": None, "actual_gas": None, "actual_net": None,
+                "prediction_error": None, "settlement": "incomplete", "started_at": None, "completed_at": None,
+                "started_at_ms": NOW, "completed_at_ms": None,
+                "explanation": "Outcome unknown for sell on coinbase (unknown): capital stays reserved and the venue is paused.",
+                "legs": [
+                    {"role": "buy", "client_order_id": "fb_1", "venue": "kraken", "status": "filled", "filled": "1", "tx_hash": None, "unknown_reason": None},
+                    {"role": "sell", "client_order_id": "fs_1", "venue": "coinbase", "status": "unknown", "filled": "0", "tx_hash": None, "unknown_reason": "transport failure after submit: RequestTimeout"},
+                ],
+            }
+        ]
+    return {"recovery_complete": True, "recovery_note": "", "recovery_report": {"loaded": len(items)}, "foreign_mode_unresolved": [], "items": items}
+
+
+def reconciliation_payload(st: dict) -> dict:
+    simulated = st["mode"] in ("paper", "simulation")
+    return {
+        "mode": st["mode"], "simulated": simulated,
+        "last": {"ok": True, "status": "ok", "discrepancies": [], "incomplete": [], "deferred": [], "checkpoints": [], "unresolved_orders": [], "deposits": [], "checked_venues": ["kraken"], "ts_ms": NOW},
+        "expected": [] if simulated else [{"account": "kraken", "asset": "USDC", "balance": "1000"}],
+        "entries": [],
+    }
 
 
 # --------------------------------------------------------------------------- route mock
@@ -338,6 +370,10 @@ class Mock:
                 return 200, {"summary": {"evaluated": 10, "would_trade": 2, "predicted_pnl": "3.50", "hypothetical_pnl": "2.10"}, "items": []}, J
             if path == "/api/trading/positions":
                 return 200, positions_payload(), J
+            if path == "/api/trading/unresolved":
+                return 200, unresolved_payload(self.sc), J
+            if path == "/api/system/reconciliation":
+                return 200, reconciliation_payload(st), J
             if path == "/api/dashboard":
                 return 200, dashboard_payload(st, self.sc.venues), J
             if path == "/api/wallets":
@@ -458,6 +494,13 @@ def run_state_scenario(browser, base: str, rep: Report, sc: Scenario) -> None:
         bar = page.inner_text('[data-testid="state-bar"]')
         for t in sc.expect_chip_texts:
             rep.check(sc.name, w, f"state chip shows '{t}'", t in bar, bar[:200])
+        if sc.unresolved:
+            page.wait_for_selector('[data-testid="unresolved-trade"]', timeout=20_000)
+            card = page.inner_text("#unresolved")
+            for needle in ("Unresolved orders (1)", "UNKNOWN", "fs_1", "never treated as", "Resolve from venue records"):
+                rep.check(sc.name, w, f"unresolved panel shows '{needle}'", needle.lower() in card.lower(), card[:200])
+        else:
+            rep.check(sc.name, w, "no unresolved panel when nothing is unresolved", page.locator("#unresolved").count() == 0)
         if sc.expect_live:
             loc = page.locator("#live-banner strong")
             ok = loc.count() == 1 and loc.first.is_visible() and LIVE_TEXT in loc.first.inner_text()

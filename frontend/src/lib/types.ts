@@ -224,6 +224,8 @@ export interface TradeRow {
   actual_net: string | null;
   prediction_error: string | null;
   explanation: string;
+  /** authoritative | incomplete | legacy (written before the v3 upgrade; realized values not provenance-checked) */
+  settlement?: string;
   started_at: string | null;
   completed_at: string | null;
 }
@@ -263,6 +265,8 @@ export interface BalanceRow {
 
 export interface PnlSummary {
   mode: string;
+  /** days whose totals include pre-upgrade records (carry entries may be double counted there) */
+  legacy_days?: string[];
   today_net: DecimalStr;
   total: { gross: DecimalStr; trading_fees: DecimalStr; gas: DecimalStr; funding: DecimalStr; slippage: DecimalStr; rebalancing: DecimalStr; other: DecimalStr; net: DecimalStr };
   trades: number;
@@ -628,7 +632,7 @@ export interface WithdrawalRow {
   asset: string;
   amount: DecimalStr;
   destination: string;
-  status: string; // requested | broadcast | confirmed | failed | rejected
+  status: string; // requested | signed | broadcast | unknown | confirmed | failed | rejected
   tx_hash?: string | null;
   fee_native?: DecimalStr | null;
   error?: string | null;

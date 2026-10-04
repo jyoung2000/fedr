@@ -223,7 +223,7 @@ async def close_position(position_id: str, body: CloseBody, app=Depends(require_
     pos = pm.open.get(position_id) if pm else None
     if pos is None:
         raise HTTPException(404, "no open position with that id")
-    if pos.status != "open":
+    if pos.status not in ("open", "closing"):  # "closing": finish the remaining legs of a partial close
         raise HTTPException(409, f"position is {pos.status}")
     tr = await pm.close(pos, body.reason[:80], trigger="user")
     if tr is None:

@@ -115,7 +115,7 @@ export function PositionsSection({ emergencyStop }: { emergencyStop?: boolean })
       noLabel: true,
       className: "sticky-right",
       render: (p) => (
-        <button type="button" className="btn btn-sm btn-danger" onClick={() => setClosing(p)} disabled={p.status !== "open"} data-testid="position-close" aria-label={`Close position ${p.pair} (${p.spot_venue} / ${p.perp_venue})`}>
+        <button type="button" className="btn btn-sm btn-danger" onClick={() => setClosing(p)} disabled={p.status !== "open" && p.status !== "closing"} title={p.status === "closing" ? "Finish closing the remaining legs" : undefined} data-testid="position-close" aria-label={`Close position ${p.pair} (${p.spot_venue} / ${p.perp_venue})`}>
           Close
         </button>
       ),

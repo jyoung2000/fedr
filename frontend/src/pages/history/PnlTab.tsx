@@ -40,6 +40,15 @@ export function PnlTab({ mode }: { mode: string }) {
           </div>
         ) : null}
       </Card>
+      {data.legacy_days && data.legacy_days.length ? (
+        <div className="banner banner-warning banner-inline" role="status">
+          <div className="banner-body small">
+            <strong>LEGACY RECORDS</strong> — {data.legacy_days.length} day(s) ({data.legacy_days.slice(0, 3).join(", ")}
+            {data.legacy_days.length > 3 ? ", …" : ""}) include P&L booked before the accounting upgrade. Earlier versions realized a
+            carry entry spread at entry and again at close; those totals are shown unchanged and are not re-computed.
+          </div>
+        </div>
+      ) : null}
       <Card title="Realized P&L summary">
         <dl className="kv kv-right">
           {lines.map(([k, v]) => (

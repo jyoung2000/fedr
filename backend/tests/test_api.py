@@ -387,3 +387,41 @@ def test_market_data_rejections_trip_venue_breaker_and_recover(api):
         assert not fedr.ctx.breakers.is_tripped(f"venue:{venue}")
 
     _run(api, t)
+
+
+def test_journal_recovery_reconciliation_and_active_work_endpoints(api):
+    async def t(c):
+        u = (await c.get("/api/trading/unresolved")).json()
+        assert u["recovery_complete"] is True and u["items"] == [] and u["recovery_report"]["loaded"] == 0
+        r = (await c.get("/api/system/reconciliation")).json()
+        assert r["simulated"] is True
+        rep = (await c.post("/api/system/reconciliation/run")).json()
+        assert rep["status"] in ("ok", "discrepancy", "incomplete")
+        # adjustments only apply to the real-venue ledger, and always need an investigation note
+        r = await c.post(
+            "/api/system/reconciliation/adjust",
+            json={"account": "kraken", "asset": "USDC", "observed": "1", "note": "short"},
+        )
+        assert r.status_code == 400
+        r = await c.post(
+            "/api/system/reconciliation/adjust",
+            json={
+                "account": "kraken",
+                "asset": "USDC",
+                "observed": "1",
+                "note": "checked venue history export",
+            },
+        )
+        assert r.status_code == 400 and "testnet/live" in r.json()["detail"]
+        r = await c.post(
+            "/api/trading/trades/trd_nope/legs/x/resolve", json={"filled": "0", "note": "venue order history"}
+        )
+        assert r.status_code == 400
+        # structural changes are refused while work is active (an in-flight trade)
+        app_obj = c._transport.app.state.fedr
+        app_obj.ctx.open_trade_ids.add("trd_inflight")
+        r = await c.post("/api/trading/mode", json={"mode": "paper"})
+        assert r.status_code == 400 and "active work" in r.json()["detail"]
+        app_obj.ctx.open_trade_ids.discard("trd_inflight")
+
+    _run(api, t)
