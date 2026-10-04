@@ -11,7 +11,7 @@ dependencies = [
   "aiosqlite>=0.20",
   "pydantic>=2.7",
   "pydantic-settings>=2.3",
-  "ccxt>=4.4",
+  "ccxt>=4.4,<5",
   "cryptography>=43",
   "web3>=7.6,<8",
   "solders>=0.21",
@@ -36,7 +36,8 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     # contract EVM tests (tests/test_contract_evm.py) run the compiled bytecode on a real EVM
-    "eth-tester>=0.13",
+    # only pre-releases exist for eth-tester >= 0.13: the explicit "b1" lets every pip version resolve it
+    "eth-tester>=0.13.0b1,<0.15",
     "py-evm>=0.10.1b1",
 ]
 

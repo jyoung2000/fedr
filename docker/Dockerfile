@@ -20,11 +20,11 @@ RUN if [ -n "$APT_PACKAGES" ]; then apt-get update && apt-get install -y --no-in
     && rm -rf /var/lib/apt/lists/*; fi
 WORKDIR /app
 COPY backend/ ./
-RUN python -m pip install .
+RUN python -m pip install -c constraints.txt .
 
 # ---------- dev target (hot reload, tests) ----------
 FROM base AS dev
-RUN python -m pip install pytest pytest-asyncio hypothesis ruff
+RUN python -m pip install -c constraints.txt pytest pytest-asyncio hypothesis ruff
 COPY --from=frontend /ui/dist ./fedr/static
 CMD ["uvicorn", "fedr.main:app", "--host", "0.0.0.0", "--port", "8935"]
 

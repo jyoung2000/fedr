@@ -105,7 +105,7 @@ first (the app runs as uid 10001 and refuses to start on an unwritable data dir)
 
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate
-pip install -e "backend[dev]"
+pip install -c backend/constraints.txt -e "backend[dev]"   # constraints = the tested dependency set
 cd frontend && npm ci && npm run build && cd ..
 FEDR_DEFAULT_MODE=simulation FEDR_GATEWAY_ENABLED=false FEDR_DATA_DIR=./data python -m fedr.main
 cd backend && pytest tests -q                      # unit + adversarial + process-level integration

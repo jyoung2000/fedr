@@ -39,7 +39,7 @@ class ExchangeSpec:
     orderbook_limits: tuple[int, ...] = field(default=())
 
 
-EXCHANGES: dict[str, ExchangeSpec] = {
+_CURATED: dict[str, ExchangeSpec] = {
     e.id: e
     for e in [
         ExchangeSpec(
@@ -280,6 +280,37 @@ EXCHANGES: dict[str, ExchangeSpec] = {
         ),
     ]
 }
+
+
+def _ccxt_ids() -> set[str]:
+    try:
+        import ccxt
+
+        return set(ccxt.exchanges)
+    except Exception:  # pragma: no cover - ccxt is a hard dependency
+        return set()
+
+
+def _split_by_availability(
+    curated: dict[str, ExchangeSpec], available: set[str]
+) -> tuple[dict[str, ExchangeSpec], dict[str, str]]:
+    """Only entries the *installed* ccxt can actually build are offered. Anything else is reported as
+    unavailable with a reason instead of being advertised and failing at connect time."""
+    ok: dict[str, ExchangeSpec] = {}
+    missing: dict[str, str] = {}
+    for eid, e in curated.items():
+        if eid not in available:
+            missing[eid] = f"ccxt has no exchange '{eid}' in the installed version"
+        elif e.perp_id and e.perp_id not in available:
+            missing[eid] = f"ccxt has no perpetuals exchange '{e.perp_id}' in the installed version"
+        else:
+            ok[eid] = e
+    return ok, missing
+
+
+# EXCHANGES = curated venues the installed ccxt provides; UNAVAILABLE = curated venues it does not
+# (e.g. ccxt 4.5.85 removed ``bitmex``), with the reason shown in the UI.
+EXCHANGES, UNAVAILABLE = _split_by_availability(_CURATED, _ccxt_ids())
 
 
 def spec(exchange_id: str) -> ExchangeSpec | None:

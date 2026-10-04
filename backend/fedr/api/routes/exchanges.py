@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from fedr.api.auth import require_app
-from fedr.connectors.cex.registry import EXCHANGES
+from fedr.connectors.cex.registry import _CURATED, EXCHANGES, UNAVAILABLE
 from fedr.connectors.dex.registry import DEXES
 from fedr.core.enums import ConnectorStatus
 
@@ -102,6 +102,10 @@ async def list_exchanges(app=Depends(require_app)):
         )
     return {
         "cex": cex,
+        "cex_unavailable": [
+            {"id": eid, "display_name": _CURATED[eid].display_name, "reason": reason}
+            for eid, reason in UNAVAILABLE.items()
+        ],
         "dex": dex,
         "gateway_ok": app.gateway_ok,
         "gateway_enabled": app.env.gateway_enabled,

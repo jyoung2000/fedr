@@ -54,6 +54,7 @@ def test_ccxt_error_mapping(exc, cls):
 def test_registry_ids_exist_in_ccxt():
     import ccxt
 
+    # every OFFERED venue must be buildable by the installed ccxt (unavailable ones are reported separately)
     for spec in EXCHANGES.values():
         assert hasattr(ccxt, spec.id), spec.id
         if spec.perp_id:
@@ -61,6 +62,17 @@ def test_registry_ids_exist_in_ccxt():
         # sandbox flag must match ccxt's urls['test'] presence (honesty check)
         ex = getattr(ccxt, spec.id)()
         assert bool(ex.urls.get("test")) == spec.sandbox, f"{spec.id}: sandbox flag mismatch"
+
+
+def test_curated_venues_missing_from_ccxt_are_reported_not_offered():
+    from fedr.connectors.cex.registry import _CURATED, UNAVAILABLE, _split_by_availability
+
+    assert set(EXCHANGES) | set(UNAVAILABLE) == set(_CURATED)
+    assert not set(EXCHANGES) & set(UNAVAILABLE)
+    ok, missing = _split_by_availability(_CURATED, set(_CURATED) - {"bitmex"})
+    assert "bitmex" not in ok and "ccxt has no exchange 'bitmex'" in missing["bitmex"]
+    ok, missing = _split_by_availability(_CURATED, set(_CURATED) - {"binanceusdm"})
+    assert "binance" in missing and "perpetuals" in missing["binance"]
 
 
 def test_ccxt_connector_builds_every_registry_exchange_offline():
