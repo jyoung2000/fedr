@@ -5,7 +5,7 @@
 >
 > Arbitrage is **not** risk-free and profits are **never** guaranteed. FEDR is built to say **no**
 > far more often than **yes**: every trade must clear a deterministic Profit Guard on *expected* **and**
-> *worst-case* net profit after every known cost, a Gas Guard, a Risk Engine and 19 circuit breakers.
+> *worst-case* net profit after every known cost, a Gas Guard, a Risk Engine and 20 circuit breakers.
 > Estimated profit is never treated as realized profit.
 
 ```
@@ -22,6 +22,13 @@ verified live deployment is [docs/LIVE_VERIFICATION_RUNBOOK.md](docs/LIVE_VERIFI
 
 ## Verification status — read before trusting anything
 
+> **Audit repairs (October 2026).** An external audit of commit `6576a7a` found execution, accounting and
+> reconciliation defects (F01–F08 among them) in areas the matrix below had marked GREEN: unknown order
+> outcomes treated as failures, no durable intent journal, an emergency-stop race, reconciliation that adopted
+> lost funds, carry P&L counted twice, missing derivative semantics, zero-valued fills and a flash-loan
+> contract that could spend existing capital. Their repairs, tests and remaining external blockers are tracked
+> in **[docs/REPAIR_STATUS.md](docs/REPAIR_STATUS.md)**, which supersedes the matrix where they disagree.
+
 `docs/STATUS.json` says **`production_ready: false`**, and it will keep saying so until the checks that
 need a real exchange, RPC, Gateway and Docker registry have been run on *your* deployment. What that
 means concretely (full detail in [docs/PRODUCTION_VERIFICATION_MATRIX.md](docs/PRODUCTION_VERIFICATION_MATRIX.md),
@@ -29,7 +36,7 @@ machine-readable in `docs/AUDIT_REPORT.json`):
 
 | Verified here (automated evidence) | Blocked by this build environment | Must stay blocked |
 |---|---|---|
-| SIMULATION and SHADOW as a real process; paper execution engine; Profit Guard incl. bypass tests; Gas Guard; Risk Engine; all 19 circuit-breaker reasons; emergency stop + hedge; reconciliation; carry lifecycle (paper); flash-loan contract compile + EVM tests; wallet encryption, backup → restore into a fresh install; withdrawal construction/allowlist/idempotency; market-data quality gate; mandatory auth, CSRF, lockout; migrations, backup/restore tooling; UI danger states at 4 widths; dependency + secret scans | anything touching a live venue: public market data, exchange sandbox/live orders, Gateway/DEX swaps, RPC/gas, on-chain deposits/withdrawals, testnet; the official Docker images (registry blocked — the Dockerfile was built with substituted base images instead); contract static analysis / fork tests | **LIVE trading with real funds** until sandbox → testnet → paper → shadow have been completed on your deployment and the flash-loan contract has been audited |
+| SIMULATION and SHADOW as a real process; paper execution engine; Profit Guard incl. bypass tests; Gas Guard; Risk Engine; all 20 circuit-breaker reasons; emergency stop + hedge; reconciliation; carry lifecycle (paper); flash-loan contract compile + EVM tests; wallet encryption, backup → restore into a fresh install; withdrawal construction/allowlist/idempotency; market-data quality gate; mandatory auth, CSRF, lockout; migrations, backup/restore tooling; UI danger states at 4 widths; dependency + secret scans | anything touching a live venue: public market data, exchange sandbox/live orders, Gateway/DEX swaps, RPC/gas, on-chain deposits/withdrawals, testnet; the official Docker images (registry blocked — the Dockerfile was built with substituted base images instead); contract static analysis / fork tests | **LIVE trading with real funds** until sandbox → testnet → paper → shadow have been completed on your deployment and the flash-loan contract has been audited |
 
 Every blocked check has a ready-made test in `backend/tests/integration/` that skips with
 `EXTERNAL ENVIRONMENT REQUIRED: …` until you set the documented variable. `scripts/verify_production.py`
@@ -43,7 +50,7 @@ runs the whole sequence and writes `docs/PRODUCTION_VERIFICATION_REPORT.md`; a s
 | Shadow mode | Evaluate real markets, submit nothing, record would-trade / predicted vs hypothetical |
 | Venues | CEX via **ccxt** (Binance, Binance US, Coinbase, Kraken, OKX, Bybit, KuCoin, Gate, Bitget, MEXC, Hyperliquid, …) · DEX via **Hummingbot Gateway** (Jupiter, Raydium, Meteora, Orca, Uniswap, PancakeSwap, 0x on Solana/Ethereum/Base/Arbitrum/Optimism/Polygon/BSC/Avalanche) |
 | Strategies | CEX↔CEX, CEX↔DEX (on by default) · DEX↔DEX, Spot↔Perp, Funding, Basis, Flash loans (off) |
-| Guards | Profit Guard (gross / expected / worst-case), Gas Guard (regimes), Slippage Guard, Latency Guard, Risk Engine, 19 circuit breakers (all wired + tested), market-data quality gate, clock-drift check, reconciliation, emergency stop |
+| Guards | Profit Guard (gross / expected / worst-case), Gas Guard (regimes), Slippage Guard, Latency Guard, Risk Engine, 20 circuit breakers (incl. `UNRESOLVED_ORDER` quarantine), market-data quality gate, clock-drift check, reconciliation, emergency stop |
 | Execution | Paired IOC execution, partial-fill handling, emergency hedge on one-leg fills, quote expiry requote-or-abort, flash-loan abort-before-broadcast |
 | Wallets | Isolated bot wallets (EVM + Solana) encrypted at rest, encrypted backups + restore into a fresh install, deposit detection with dedupe, allowlisted withdrawals (native + ERC-20/SPL, new-address delay, idempotent), MetaMask/Phantom for funding only |
 | Carry | Spot↔perp / funding / basis positions: paired entry, funding accrual, exit rules (convergence, funding flip, max hold, liquidation distance, basis stop), manual/forced close, reconciliation — paper-verified only |

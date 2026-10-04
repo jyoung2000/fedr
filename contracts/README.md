@@ -12,7 +12,7 @@ Safety properties (see `src/FlashLoanArbitrage.sol`):
 | No arbitrary external calls | The contract only knows Uniswap V3 `exactInputSingle` and V2 `swapExactTokensForTokens` |
 | Routers / tokens are allowlisted | `setRouter`, `setToken` (owner only) |
 | Minimum outputs enforced on-chain | `minAmountOut` per leg |
-| Minimum profit enforced on-chain | `InsufficientProfit` revert unless balance ≥ amount + premium + minProfit |
+| Minimum profit enforced on-chain | `InsufficientProfit` revert unless end balance ≥ **pre-loan balance** + amount + premium + minProfit; the event reports the incremental gain only (audit F01: earlier versions let capital already held by the contract subsidise a losing route) |
 | Deadline | `DeadlinePassed` revert |
 | Reentrancy | OpenZeppelin `ReentrancyGuard` |
 | Emergency | `Pausable`, `rescueERC20` |

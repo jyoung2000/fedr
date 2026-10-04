@@ -50,7 +50,25 @@ the app refuses to start on an unwritable data dir rather than running without p
 
 ## Runbooks
 
-**Restart**: `docker compose restart app` — state is in `/data`; open trades are reconciled on boot.
+**Restart**: `docker compose restart app` — state is in `/data`. On boot FEDR runs **journal recovery before
+admitting anything**: every trade whose order intents were journaled but not settled is rebuilt, its
+reservations are restored, its venues are paused (`UNRESOLVED_ORDER`) and each leg is looked up by client order
+id / transaction hash. New submissions stay blocked until that pass completes (`GET /api/trading/unresolved` →
+`recovery_complete`). Only one FEDR process may use a data directory (`/data/fedr.lock`); a second one exits.
+
+**Unknown order outcome** (Trading → Unresolved orders): a timeout, dropped connection, failed cancel or
+unconfirmed transaction is never treated as "not filled". The capital stays reserved, the venue is paused and
+the resolution loop retries the lookup every 5 s. If the venue can no longer answer (order history expired,
+DEX transaction without a hash), check the venue's own records and use "Resolve from venue records": enter
+the filled amount, total quote cost and fee, plus where you verified it. The resolution is audited; the trade
+is then settled exactly once (hedge of a confirmed imbalance, accounting, P&L).
+
+**Unreconciled trade** (status `unreconciled`): every leg is final but the venue did not report a value needed
+for realized P&L (cost, fee, gas price). Nothing is booked; resolve the leg from the venue's records the same way.
+
+**Mode / venue changes with active work**: changing mode, pairs, DEXes, strategies, exchange accounts or entering
+LIVE is refused while trades are in flight/unresolved or carry positions are open — the connectors that monitor
+them would be swapped out. Close positions and resolve trades first.
 
 **Emergency stop**: header button (or `POST /api/system/emergency-stop`). Stops new trades, cancels
 cancellable CEX orders, blocks DEX / flash-loan execution, runs reconciliation, persists the flag. Release
@@ -59,8 +77,18 @@ from the banner after investigating.
 **Circuit breaker tripped**: the banner lists reason and detail; investigate (History → Risk events, Audit),
 then "Reset after investigation". Daily-loss and one-leg-fill breakers deserve a look at History → Trades.
 
-**Reconciliation discrepancy**: trading pauses (`BALANCE_DISCREPANCY`). Compare the exchange balance with
-History → Trades and the audit log, correct inventory, then reset the breaker.
+**Reconciliation** (Health → Reconciliation, `GET /api/system/reconciliation`): on testnet/live, expected
+balances come from a durable ledger: an opening checkpoint per account (its first observation, recorded before
+any trade), confirmed fills/fees/gas, withdrawals (from their receipts), deposits and explicit adjustments. A
+venue snapshot never overwrites the expectation; an expected asset the venue stops reporting is a discrepancy;
+a failed balance or open-order query is *incomplete* (that venue is paused until it can be observed again);
+accounts with work in flight are deferred. An increase on an idle account is booked as an audited "deposit
+(source not verified)"; a decrease is never auto-explained.
+
+**Reconciliation discrepancy**: trading pauses (`BALANCE_DISCREPANCY`). Compare the venue's history with
+History → Trades, the ledger entries and the audit log. When the difference is explained (e.g. a venue fee
+FEDR could not see), record it with "Record an adjustment" (`POST /api/system/reconciliation/adjust`, note
+required) — the ledger gets a new `adjustment` row; history is never rewritten. Then reset the breaker.
 
 **Rotate the UI token**: change `FEDR_AUTH_TOKEN`, `docker compose up -d`.
 
@@ -89,7 +117,20 @@ Enable external checks with: `FEDR_IT_DOCKER=1` (running stack), `FEDR_IT_NETWOR
 `FEDR_IT_GATEWAY_URL` (Gateway), `FEDR_IT_TESTNET=1` + `FEDR_RPC_SEPOLIA` + `FEDR_IT_TESTNET_ADDRESS`.
 
 **Upgrade**: `git pull && docker compose build && docker compose up -d`. The settings document is versioned
-(`AppSettings.version`); unknown fields are ignored, missing ones get defaults.
+(`AppSettings.version`); unknown fields are ignored, missing ones get defaults. Before a schema upgrade FEDR
+writes a consistent copy of the database next to it (`fedr.db.pre-v<new>-from-v<old>-<ts>.bak`, SQLite
+`VACUUM INTO`). **Roll back** = stop FEDR, replace `database/fedr.db` with that file, start the previous image.
+
+Schema v3 (order journal, settlement provenance, reconciliation ledger) marks existing trades
+`settlement=legacy` and existing P&L days `legacy` instead of "correcting" them: releases before v3 booked a
+carry entry's spread at entry *and* the lifecycle at close (audit F06). Open carry positions remember what was
+booked at entry, so their close books only the remainder. The opening reconciliation checkpoint of each real
+account is taken at the first observation after the upgrade.
+
+**Flash loans on mainnet** stay disabled until the exact deployed bytecode passed fork validation and an
+independent review: set `FEDR_FLASHLOAN_APPROVED_CODEHASH_<CHAIN>` to `keccak256(runtime code)` of that
+deployment (`cast codehash <addr>`). FEDR compares it with the on-chain code hash before every simulation and
+broadcast and verifies the RPC chain id before signing. TESTNET flash loans are not supported.
 
 ## Health
 
