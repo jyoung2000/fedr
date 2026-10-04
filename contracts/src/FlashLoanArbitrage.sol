@@ -39,7 +39,8 @@ interface IV2Router {
  * Route: asset --(legA on routerA)--> intermediate --(legB on routerB)--> asset, then repay amount + premium.
  * The transaction REVERTS (and the flash loan is unwound) if:
  *  - either swap returns less than its minimum output,
- *  - the final balance cannot cover amount + premium + minProfit,
+ *  - the final balance cannot cover the PRE-LOAN balance + amount + premium + minProfit (profit is
+ *    measured incrementally: capital already held by the contract can never subsidise a losing route),
  *  - the deadline has passed,
  *  - a router/token is not allowlisted, or the caller is not the owner.
  *
@@ -70,6 +71,7 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
     mapping(address => bool) public allowedRouters;
     mapping(address => bool) public allowedTokens;
     address private _executingAsset; // transient guard so only our own flash loan can call back
+    uint256 private _startBalance;   // loan-asset balance captured before the loan (incremental-profit baseline)
 
     event RouterAllowed(address indexed router, bool allowed);
     event TokenAllowed(address indexed token, bool allowed);
@@ -82,6 +84,7 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
     error DeadlinePassed();
     error InsufficientProfit(uint256 have, uint256 need);
     error ZeroAmount();
+    error IntermediateIsAsset();
 
     constructor(address pool, address initialOwner) Ownable(initialOwner) {
         POOL = IPool(pool);
@@ -115,9 +118,14 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
         if (!allowedTokens[p.intermediate]) revert TokenNotAllowed(p.intermediate);
         if (!allowedRouters[p.legA.router]) revert RouterNotAllowed(p.legA.router);
         if (!allowedRouters[p.legB.router]) revert RouterNotAllowed(p.legB.router);
+        if (p.intermediate == asset) revert IntermediateIsAsset();
         _executingAsset = asset;
+        // Baseline for the incremental-profit check. Captured BEFORE the pool transfers the loan in, so
+        // prior profits / deposits held by this contract are excluded from the profit measurement.
+        _startBalance = IERC20(asset).balanceOf(address(this));
         POOL.flashLoanSimple(address(this), asset, amount, abi.encode(p), 0);
         _executingAsset = address(0);
+        _startBalance = 0;
     }
 
     /// @notice Aave V3 callback. Must repay amount + premium via approval to the Pool.
@@ -133,10 +141,12 @@ contract FlashLoanArbitrage is Ownable2Step, ReentrancyGuard, Pausable {
 
         uint256 owed = amount + premium;
         uint256 balance = IERC20(asset).balanceOf(address(this));
-        if (balance < owed + p.minProfit) revert InsufficientProfit(balance > owed ? balance - owed : 0, p.minProfit);
+        // Incremental invariant: end balance >= pre-loan balance + repayment + minProfit.
+        uint256 floor = _startBalance + owed;
+        if (balance < floor + p.minProfit) revert InsufficientProfit(balance > floor ? balance - floor : 0, p.minProfit);
         // exact-amount approval for repayment (no infinite approvals)
         IERC20(asset).forceApprove(address(POOL), owed);
-        emit ArbitrageExecuted(asset, amount, premium, balance - owed);
+        emit ArbitrageExecuted(asset, amount, premium, balance - floor);
         return true;
     }
 

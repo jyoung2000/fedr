@@ -73,3 +73,14 @@ contract ReentrantRouter {
         amounts = new uint256[](2); amounts[0] = amountIn; amounts[1] = amountIn;
     }
 }
+
+/// ERC-20 double with configurable decimals (used to exercise 6/8/18-decimal loan assets).
+contract MockTokenD {
+    string public name = "MockD"; string public symbol = "MOCKD"; uint8 public decimals;
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    constructor(uint8 d) { decimals = d; }
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function transfer(address to, uint256 a) external returns (bool) { balanceOf[msg.sender] -= a; balanceOf[to] += a; return true; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function transferFrom(address f, address t, uint256 a) external returns (bool) { allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[t] += a; return true; }
+}

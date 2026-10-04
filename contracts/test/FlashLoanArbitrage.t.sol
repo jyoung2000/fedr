@@ -99,4 +99,35 @@ contract FlashLoanArbitrageTest is Test {
         vm.expectRevert(FlashLoanArbitrage.NotPool.selector);
         arb.executeOperation(address(usdc), 1, 0, address(arb), "");
     }
+
+    /// F01: capital already held by the contract must never subsidise a losing route.
+    function testExistingCapitalCannotSubsidiseLosingRoute() public {
+        usdc.mint(address(arb), 2_000e18);
+        MockV2Router loser = new MockV2Router(9_500); // -5% on leg A
+        arb.setRouter(address(loser), true);
+        FlashLoanArbitrage.ArbParams memory p = _params(100e18, block.timestamp + 60);
+        p.legA.router = address(loser);
+        vm.expectRevert();
+        arb.executeArbitrage(address(usdc), 10_000e18, p);
+        assertEq(usdc.balanceOf(address(arb)), 2_000e18);
+    }
+
+    /// F01: the reported profit is the incremental gain, not the contract's whole balance.
+    function testProfitIsIncremental() public {
+        usdc.mint(address(arb), 2_000e18);
+        arb.executeArbitrage(address(usdc), 10_000e18, _params(100e18, block.timestamp + 60));
+        uint256 gain = usdc.balanceOf(address(arb)) - 2_000e18;
+        assertEq(gain, 10_201e18 - 10_000e18 - 5e18);
+    }
+
+    function testFuzzNegativeIncrementalReturnAlwaysReverts(uint96 initial, uint16 rateA) public {
+        vm.assume(rateA > 0 && rateA < 9_900); // with leg B at +1% the round trip loses money
+        usdc.mint(address(arb), uint256(initial));
+        MockV2Router loser = new MockV2Router(rateA);
+        arb.setRouter(address(loser), true);
+        FlashLoanArbitrage.ArbParams memory p = _params(0, block.timestamp + 60);
+        p.legA.router = address(loser);
+        vm.expectRevert();
+        arb.executeArbitrage(address(usdc), 10_000e18, p);
+    }
 }
