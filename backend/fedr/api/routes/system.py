@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -314,3 +315,61 @@ async def events(request: Request, app=Depends(require_app)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ------------------------------------------------------------------ reconciliation (durable ledger)
+@router.get("/system/reconciliation")
+async def reconciliation(app=Depends(require_app), limit: int = 100):
+    rep = app.reconciler.last
+    expected = await app.repo.ledger_balances(app.mode)
+    entries = await app.repo.list_ledger_entries(app.mode, limit=limit)
+    return {
+        "mode": app.mode.value,
+        "simulated": app.ctx.is_simulated_execution,
+        "last": rep.as_dict() if rep else None,
+        "expected": [
+            {"account": a, "asset": asset, "balance": str(v)}
+            for (a, asset), v in sorted(expected.items())
+            if asset != "_none"
+        ],
+        "entries": [
+            {
+                "ts": e.ts.isoformat(),
+                "account": e.account,
+                "asset": e.asset,
+                "delta": e.delta,
+                "kind": e.kind,
+                "ref": e.ref,
+                "actor": e.actor,
+                "note": e.note,
+            }
+            for e in entries
+        ],
+    }
+
+
+@router.post("/system/reconciliation/run")
+async def reconciliation_run(app=Depends(require_app)):
+    rep = await app.reconciler.run_once()
+    return rep.as_dict()
+
+
+class AdjustBody(BaseModel):
+    account: str
+    asset: str
+    observed: Decimal
+    note: str
+
+
+@router.post("/system/reconciliation/adjust")
+async def reconciliation_adjust(body: AdjustBody, app=Depends(require_app)):
+    """Explicit, audited correction of the expected ledger after an investigation (never a silent overwrite)."""
+    if len(body.note.strip()) < 8:
+        raise HTTPException(400, "describe the investigation that explains the difference")
+    try:
+        delta = await app.reconciler.adjust(
+            body.account, body.asset.upper(), observed=body.observed, note=body.note
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "delta": str(delta)}

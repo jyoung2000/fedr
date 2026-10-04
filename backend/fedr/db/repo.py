@@ -312,6 +312,24 @@ class Repo:
             out[(acct, asset)] = out.get((acct, asset), ZERO) + D(delta)
         return out
 
+    async def ledger_opening_accounts(self, mode: TradingMode) -> set[str]:
+        from fedr.db.models import LedgerEntry
+
+        async with self.db.session() as s:
+            rows = (
+                await s.execute(
+                    select(LedgerEntry.account)
+                    .where(LedgerEntry.mode == mode.value, LedgerEntry.kind == "opening")
+                    .distinct()
+                )
+            ).all()
+        return {r[0] for r in rows}
+
+    async def trades_with_status(self, mode: TradingMode, statuses: list[str]) -> list[Trade]:
+        async with self.db.session() as s:
+            q = select(Trade).where(Trade.mode == mode.value, Trade.status.in_(statuses))
+            return list((await s.execute(q)).scalars())
+
     async def list_ledger_entries(self, mode: TradingMode, limit: int = 200) -> list:
         from fedr.db.models import LedgerEntry
 
@@ -425,6 +443,9 @@ class Repo:
                 today_net = D(r.net)
         return {
             "mode": mode.value,
+            # days whose totals include records written before schema v3 (carry entries may be double
+            # counted there - audit F06); they are shown as legacy, never silently "corrected"
+            "legacy_days": sorted(r.day for r in rows if r.legacy),
             "today_net": str(today_net),
             "total": {k: str(v) for k, v in total.items()},
             "trades": trades,

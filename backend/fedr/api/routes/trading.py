@@ -244,3 +244,69 @@ async def close_all_positions(body: CloseBody, app=Depends(require_app)):
         return {"closed": []}
     trades = await pm.close_all(body.reason[:80], trigger="user")
     return {"closed": [trade_detail(t) for t in trades]}
+
+
+# ------------------------------------------------------------------ unresolved work (journal) controls
+@router.get("/trading/unresolved")
+async def unresolved(app=Depends(require_app)):
+    """Trades whose order outcome is unknown, or whose fills lack authoritative values, plus the
+    startup recovery state. These hold capital and pause their venues until resolved."""
+    ex = app.executor
+    rows = await app.repo.trades_with_status(app.mode, ["unknown", "unreconciled"])
+    return {
+        "recovery_complete": app.ctx.admission.recovery_complete,
+        "recovery_note": app.ctx.admission.recovery_note,
+        "recovery_report": app.recovery_report,
+        "foreign_mode_unresolved": ex.foreign_unresolved if ex else [],
+        "items": [
+            {
+                **trade_row_from_db(r),
+                "legs": [
+                    {
+                        "role": role,
+                        "client_order_id": (r.payload.get(role) or {})
+                        .get("request", {})
+                        .get("client_order_id"),
+                        "venue": (r.payload.get(role) or {}).get("request", {}).get("venue"),
+                        "status": (r.payload.get(role) or {}).get("status"),
+                        "filled": (r.payload.get(role) or {}).get("filled"),
+                        "tx_hash": (r.payload.get(role) or {}).get("tx_hash"),
+                        "unknown_reason": ((r.payload.get(role) or {}).get("raw") or {}).get(
+                            "unknown_reason"
+                        ),
+                    }
+                    for role in ("buy", "sell", "hedge")
+                    if r.payload.get(role)
+                ],
+            }
+            for r in rows
+        ],
+    }
+
+
+class LegResolution(BaseModel):
+    filled: Decimal
+    cost: Decimal | None = None
+    fee_amount: Decimal | None = None
+    fee_asset: str | None = None
+    note: str
+
+
+@router.post("/trading/trades/{trade_id}/legs/{client_order_id}/resolve")
+async def resolve_leg(trade_id: str, client_order_id: str, body: LegResolution, app=Depends(require_app)):
+    """Operator resolution of an unknown / unreconciled leg from the venue's own records (audited)."""
+    if len(body.note.strip()) < 8:
+        raise HTTPException(400, "describe the evidence (venue order history, tx explorer link, …)")
+    try:
+        tr = await app.executor.operator_resolve_leg(
+            trade_id,
+            client_order_id,
+            filled=body.filled,
+            cost=body.cost,
+            fee_amount=body.fee_amount,
+            fee_asset=body.fee_asset.upper() if body.fee_asset else None,
+            note=body.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"trade": trade_detail(tr)}

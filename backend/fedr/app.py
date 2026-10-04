@@ -290,9 +290,25 @@ class FedrApp:
         self.flashloan = FlashLoanEngine(self.ctx, self.wallets, self.env)
         self.positions = PositionManager(self.ctx, self.executor)
         self.ctx.flash_loan_simulator = self.flashloan.simulate
-        self.reconciler = Reconciler(self.ctx)
+        self.reconciler = Reconciler(self.ctx, self.executor)
+        self.executor.on_settled = self.reconciler.record_trade
+        self.reconciler.on_deposit = self._on_deposit
         self.shadow = ShadowRecorder(self.ctx)
         self.withdrawals = WithdrawalService(self.wallets, self.env, hub.prices.get, token_registry={})
+
+    async def _on_deposit(self, dep: dict) -> None:
+        from fedr.wallets.transfers import DepositEvent
+
+        ev = DepositEvent(
+            chain=dep["account"],
+            asset=dep["asset"],
+            amount=dep["amount"],
+            address="",
+            dedupe_key=f"{dep['account']}:{dep['asset']}:{dep['observed']}",
+        )
+        self.deposits.events.append(ev)
+        self.deposits.events = self.deposits.events[-200:]
+        self._push_event("deposit", {"chain": ev.chain, "asset": ev.asset, "amount": str(ev.amount)})
 
     async def _persist_breakers(self, breakers: list[Breaker]) -> None:
         self.metrics.breaker_trips += 1
@@ -691,20 +707,12 @@ class FedrApp:
                 continue
             if c.kind is VenueKind.DEX:
                 seen_chains.add(lv)
-                for ev in self.deposits.observe(lv, {a: b.total for a, b in bals.items()}):
-                    self._push_event(
-                        "deposit", {"chain": ev.chain, "asset": ev.asset, "amount": str(ev.amount)}
-                    )
-                    if self.repo:
-                        await self.repo.audit(
-                            self.mode,
-                            "wallet",
-                            f"Deposit detected: {ev.amount} {ev.asset} on {ev.chain}",
-                            {"chain": ev.chain, "asset": ev.asset, "amount": str(ev.amount)},
-                        )
             ctx.inventory.update_balances(lv, bals, kind="chain" if c.kind is VenueKind.DEX else "cex")
-            for a, b in bals.items():
-                self.reconciler.set_expected(lv, a, b.total)
+            # a venue snapshot never overwrites the expected ledger; it only seeds the opening checkpoint
+            if c.kind is not VenueKind.PERP and (
+                getattr(c, "credentials", None) or getattr(c, "wallet_address", None)
+            ):
+                await self.reconciler.ensure_checkpoint(lv, {a: b.total for a, b in bals.items()})
             if self.repo:
                 await self.repo.snapshot_balances(
                     self.mode,

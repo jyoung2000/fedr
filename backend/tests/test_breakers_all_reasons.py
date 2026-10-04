@@ -172,9 +172,9 @@ def test_funding_anomaly_blocks_carry_open_and_trips():
     asyncio.run(run())
 
 
-def test_balance_and_position_discrepancy_and_manual():
+def test_balance_and_position_discrepancy_and_manual(tmp_path):
     async def run():
-        h = await Harness().start()
+        h = await Harness(with_db=True).start(tmp_path)
         from fedr.core.enums import TradingMode
         from fedr.core.models import Balance
         from fedr.engine.reconciliation import Reconciler
@@ -185,7 +185,12 @@ def test_balance_and_position_discrepancy_and_manual():
         h.ctx.ledger = None
         h.ctx.paper_executor = None
         rec = Reconciler(h.ctx)
-        rec.set_expected("kraken", "USDC", D("5000"))
+        h.ctx.connectors["kraken"].credentials = {"apiKey": "k"}
+        # expected balances come from the durable ledger (opening checkpoint), never from a snapshot
+        await h.repo.add_ledger_entries(
+            TradingMode.LIVE,
+            [{"account": "kraken", "asset": "USDC", "delta": D("5000"), "kind": "opening", "ref": "t"}],
+        )
 
         async def fake_balances():
             return {"USDC": Balance("USDC", D("4000"))}

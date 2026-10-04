@@ -165,6 +165,8 @@ def trade_row_from_db(row) -> dict:
         "actual_net": row.actual_net,
         "prediction_error": row.prediction_error,
         "explanation": row.explanation,
+        # authoritative | incomplete | legacy (pre-v3 record: realized values not provenance-checked)
+        "settlement": getattr(row, "settlement", None) or "authoritative",
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "started_at_ms": int(row.started_at.timestamp() * 1000) if row.started_at else None,

@@ -449,14 +449,19 @@ def test_emergency_stop_blocks_execution_and_persists(harness, tmp_path):
     asyncio.run(run())
 
 
-def test_reconciliation_pauses_on_discrepancy(harness):
+def test_reconciliation_pauses_on_discrepancy(harness, tmp_path):
     async def run():
-        h = await harness().start()
+        h = await harness(with_db=True).start(tmp_path)
         h.ctx.settings.general.mode = TradingMode.LIVE  # real reconciliation path
         h.ctx.ledger = None
         h.ctx.paper_executor = None
         rec = Reconciler(h.ctx)
-        rec.set_expected("kraken", "USDC", D("5000"))
+        h.ctx.connectors["kraken"].credentials = {"apiKey": "k"}
+        # expected balances come from the durable ledger (opening checkpoint), never from a snapshot
+        await h.repo.add_ledger_entries(
+            TradingMode.LIVE,
+            [{"account": "kraken", "asset": "USDC", "delta": D("5000"), "kind": "opening", "ref": "t"}],
+        )
 
         async def fake_balances():
             from fedr.core.models import Balance
