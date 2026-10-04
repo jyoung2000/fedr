@@ -209,7 +209,7 @@ def test_positions_survive_restart_and_reconcile_mismatch(tmp_path):
         await pm2.load()
         assert pos.id in pm2.open and pm2.open[pos.id].size_base == pos.size_base
         # venue reports no short at all -> discrepancy breaker
-        problems = await pm2.reconcile({})
+        problems = await pm2.reconcile([])
         assert problems and h.breakers.is_tripped()
         assert any(b.reason is CircuitBreakerReason.POSITION_DISCREPANCY for b in h.breakers._active.values())
         assert "expected short" in problems[0]

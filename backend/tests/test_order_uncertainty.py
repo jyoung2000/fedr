@@ -430,3 +430,20 @@ def test_dex_definitive_simulation_failure_is_failed():
         assert res.status is OrderStatus.FAILED and res.is_terminal
 
     asyncio.run(run())
+
+
+def test_swap_order_book_is_converted_from_contracts_to_base_units():
+    async def run():
+        c, ex = _connector(market_type="swap", contract_size=D("0.1"))
+
+        async def fetch_order_book(symbol, limit=None):
+            return {"bids": [[99, 10]], "asks": [[100, 10], [101, 100]], "timestamp": 1}
+
+        ex.fetch_order_book = fetch_order_book
+        c.spec = None
+        ob = await c.fetch_order_book("SOL/USDC:USDC")
+        assert ob.asks[0].amount == D("1.0") and ob.bids[0].amount == D("1.0")  # 10 contracts = 1 SOL
+        w = ob.walk(OrderSide.BUY, D("2"))
+        assert w.fully_filled and w.levels_consumed == 2  # 1 SOL @100 + 1 SOL @101, not 2 contracts
+
+    asyncio.run(run())

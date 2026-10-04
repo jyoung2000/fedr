@@ -90,8 +90,17 @@ class PaperExecutor:
         # 5. settle ledger
         try:
             if connector.kind is VenueKind.PERP:
+                entry_notional = req.extra.get("entry_notional")
+                if entry_notional is not None and fill_base < req.amount:
+                    entry_notional = D(entry_notional) * fill_base / req.amount
                 await self.ledger.settle_perp(
-                    lv, quote_asset, req.side, quote_amount, fee_quote, reduce_only=req.reduce_only
+                    lv,
+                    quote_asset,
+                    req.side,
+                    quote_amount,
+                    fee_quote,
+                    reduce_only=req.reduce_only,
+                    entry_notional=D(entry_notional) if entry_notional is not None else None,
                 )
             else:
                 await self.ledger.settle_fill(

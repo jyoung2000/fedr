@@ -730,7 +730,7 @@ class FedrApp:
                 self.ctx.extra["recent_trades"] = self.executor.recent[-20:] if self.executor else []
                 await self.reconciler.run_once()
                 if self.positions and self.positions.open and not self.ctx.is_simulated_execution:
-                    await self.positions.reconcile(await self._venue_perp_shorts())
+                    await self.positions.reconcile(await self._venue_perp_positions())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -776,7 +776,8 @@ class FedrApp:
                 await asyncio.sleep(10)
                 if not self.positions or not self.positions.open:
                     continue
-                await self.positions.accrue_due_funding(self._funding_rate)
+                await self.positions.refresh_venue_state()
+                await self.positions.accrue_due_funding(self._funding_rate, self._funding_paid)
                 marks = await self.positions.monitor()
                 self.ctx.extra["positions"] = marks
                 for m in marks:
@@ -797,21 +798,36 @@ class FedrApp:
             return None
         return D(raw["fundingRate"])
 
-    async def _venue_perp_shorts(self) -> dict[str, Decimal]:
-        """Short size per perp symbol as reported by the venues (live/testnet reconciliation input)."""
-        out: dict[str, Decimal] = {}
+    async def _funding_paid(self, venue: str, symbol: str, since_ms: int) -> Decimal | None:
+        """Venue-reported funding payments (USD) since ``since_ms``; None when the venue cannot report them."""
+        c = self.ctx.connectors.get(venue)
+        ex = getattr(c, "exchange", None)
+        if ex is None or not ex.has.get("fetchFundingHistory"):
+            return None
+        rows = await ex.fetch_funding_history(symbol, since=since_ms)
+        total = ZERO
+        for r in rows or []:
+            amt, cur = r.get("amount"), str(r.get("code") or r.get("currency") or "")
+            if amt is None:
+                return None
+            px = self.ctx.price_usd(cur) if cur else None
+            if px is None:
+                return None
+            total += D(amt) * px
+        return total
+
+    async def _venue_perp_positions(self) -> list[dict]:
+        """Venue positions in BASE units keyed by venue + symbol + side (contracts x contractSize)."""
+        out: list[dict] = []
         for c in self.ctx.connectors.values():
-            fetch = getattr(c, "fetch_positions", None)
+            fetch = getattr(c, "venue_positions", None)
             if c.kind is not VenueKind.PERP or fetch is None or not c.connected:
                 continue
             try:
-                for pos in await fetch():
-                    sym = str(pos.get("symbol") or "")
-                    size = D(pos.get("contracts") or pos.get("contractSize") or 0)
-                    if str(pos.get("side") or "").lower() == "short" and size:
-                        out[sym] = out.get(sym, ZERO) + abs(size)
+                out.extend(await fetch())
             except ConnectorError as exc:
                 log.warning("position fetch failed", venue=c.name, error=str(exc)[:120])
+                raise  # an unobservable venue must not look like "no positions"
         return out
 
     async def _housekeeping_loop(self) -> None:

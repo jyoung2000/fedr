@@ -305,8 +305,8 @@ class CcxtConnector(VenueConnector):
         ob = OrderBook.from_raw(
             self.name,
             symbol,
-            raw["bids"],
-            raw["asks"],
+            self._levels_in_base(symbol, raw["bids"]),
+            self._levels_in_base(symbol, raw["asks"]),
             ts_ms=raw.get("timestamp") or now_ms(),
             source="rest",
             sequence=raw.get("nonce"),
@@ -331,12 +331,21 @@ class CcxtConnector(VenueConnector):
             yield OrderBook.from_raw(
                 self.name,
                 symbol,
-                list(raw["bids"])[:depth],
-                list(raw["asks"])[:depth],
+                self._levels_in_base(symbol, list(raw["bids"])[:depth]),
+                self._levels_in_base(symbol, list(raw["asks"])[:depth]),
                 ts_ms=raw.get("timestamp") or now_ms(),
                 source="ws",
                 sequence=raw.get("nonce"),
             )
+
+    def _levels_in_base(self, symbol: str, levels: list) -> list:
+        """Swap order books are quoted in CONTRACTS; the engine walks books in BASE units."""
+        if self.market_type != "swap":
+            return levels
+        cs = self._contract_size(symbol)
+        if cs == 1:
+            return levels
+        return [[lv[0], str(D(lv[1]) * cs)] + list(lv[2:]) for lv in levels]
 
     async def get_quote(
         self, symbol: str, side: OrderSide, base_amount: Decimal, *, order_book: OrderBook | None = None
@@ -825,6 +834,67 @@ class CcxtConnector(VenueConnector):
             return await self.exchange.fetch_positions(symbols)
         except Exception as exc:
             raise _map_error(exc) from exc
+
+    async def verify_derivative_settings(self, symbol: str) -> list[str]:
+        """Problems that prevent trusting FEDR's 1x / one-way / linear risk model on this swap market.
+        Empty list = verified with the venue's own account settings. Unverifiable counts as a problem."""
+        problems: list[str] = []
+        if self.market_type != "swap":
+            return [f"{self.name} is not a derivatives connector"]
+        m = self.markets.get(symbol)
+        if m is None:
+            return [f"{symbol} is not a loaded linear swap market on {self.name}"]
+        has = self.exchange.has
+        if has.get("fetchPositionMode"):
+            try:
+                mode = await self.exchange.fetch_position_mode(symbol)
+                if mode.get("hedged"):
+                    problems.append(
+                        "account is in hedge (dual-side) position mode; FEDR requires one-way mode"
+                    )
+            except Exception as exc:
+                problems.append(f"position mode could not be verified ({str(exc)[:80]})")
+        else:
+            problems.append("venue/ccxt cannot report the position mode (one-way vs hedge)")
+        if has.get("fetchLeverage"):
+            try:
+                lev = await self.exchange.fetch_leverage(symbol)
+                values = [lev.get(k) for k in ("shortLeverage", "longLeverage", "leverage") if lev.get(k)]
+                if not values:
+                    problems.append("leverage not reported")
+                elif any(D(v) > 1 for v in values):
+                    problems.append(
+                        f"leverage {max(D(v) for v in values)}x configured; FEDR's risk model is 1x"
+                    )
+                mm = str(lev.get("marginMode") or "").lower()
+                if mm and mm != "isolated":
+                    problems.append(f"margin mode {mm}; FEDR requires isolated margin per position")
+            except Exception as exc:
+                problems.append(f"leverage could not be verified ({str(exc)[:80]})")
+        else:
+            problems.append("venue/ccxt cannot report leverage for this market")
+        return problems
+
+    async def venue_positions(self, symbols: list[str] | None = None) -> list[dict]:
+        """Positions normalised to BASE units: {symbol, side, size_base, liquidation_price, leverage}."""
+        out = []
+        for p in await self.fetch_positions(symbols):
+            sym = str(p.get("symbol") or "")
+            contracts = D(p.get("contracts") or 0)
+            cs = D(p.get("contractSize") or 0) or self._contract_size(sym)
+            if contracts == 0:
+                continue
+            out.append(
+                {
+                    "venue": self.name,
+                    "symbol": sym,
+                    "side": str(p.get("side") or "").lower(),
+                    "size_base": abs(contracts) * cs,
+                    "liquidation_price": D(p["liquidationPrice"]) if p.get("liquidationPrice") else None,
+                    "leverage": D(p["leverage"]) if p.get("leverage") else None,
+                }
+            )
+        return out
 
     async def fetch_deposit_address(self, asset: str, network: str | None = None) -> dict | None:
         if not self.credentials or not self.exchange.has.get("fetchDepositAddress"):

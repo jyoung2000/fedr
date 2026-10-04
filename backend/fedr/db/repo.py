@@ -813,6 +813,10 @@ class Repo:
         async with self.db.session() as s:
             await s.merge(pos)
 
+    async def get_position(self, position_id: str) -> Position | None:
+        async with self.db.session() as s:
+            return await s.get(Position, position_id)
+
     async def list_positions(
         self, mode: TradingMode, open_only: bool = False, limit: int = 100
     ) -> list[Position]:

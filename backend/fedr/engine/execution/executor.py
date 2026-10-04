@@ -80,6 +80,9 @@ class ExecutionEngine:
         self._resolve_lock = asyncio.Lock()
         # optional hook (reconciliation ledger): called with every trade whose fills are final
         self.on_settled: Callable[[TradeRecord], Awaitable[None]] | None = None
+        # position manager hooks: create a carry position from a settled entry; finish a close trade
+        self.carry_opener: Callable[[TradeRecord], Awaitable[object]] | None = None
+        self.close_settler: Callable[[TradeRecord], Awaitable[None]] | None = None
 
     # ------------------------------------------------------------------ entry
     def _precheck(self, opp: Opportunity, allow_carry: bool) -> str | None:
@@ -111,7 +114,11 @@ class ExecutionEngine:
         return None
 
     async def execute(
-        self, opp: Opportunity, trigger: str = "auto", allow_carry: bool = False
+        self,
+        opp: Opportunity,
+        trigger: str = "auto",
+        allow_carry: bool = False,
+        carry: dict | None = None,
     ) -> TradeRecord:
         ctx = self.ctx
         s = ctx.settings
@@ -192,6 +199,7 @@ class ExecutionEngine:
         tr.extra.update(
             {
                 "carry_entry": opp.strategy in CARRY,
+                "carry": {k: str(v) for k, v in (carry or {}).items()} if carry else None,
                 "notional_usd": str(fresh.extra.get("notional_usd", "0")),
                 "route_key": fresh.extra.get("route_key"),
                 "quote_asset": quote,
@@ -587,15 +595,26 @@ class ExecutionEngine:
                 self.unresolved[tr.id] = tr
                 async with self._resolve_lock:
                     await self._after_resolution(tr)
+        elif tr.extra.get("position_close") and self.close_settler is not None:
+            await self.close_settler(tr)
         else:  # UNRECONCILED: legs were final, values were missing - recompute and book once
             tr.status = TradeStatus.EXECUTING
             await self._account_and_book(tr)
+            if tr.extra.get("carry_entry") and self.carry_opener is not None:
+                await self.carry_opener(tr)
         return tr
 
     # ------------------------------------------------------------------ settlement
     async def _settle(self, tr: TradeRecord) -> None:
         """Every leg is known: release unused capital, handle imbalance, account, book, persist."""
         ctx = self.ctx
+        if tr.extra.get("position_close") and self.close_settler is not None:
+            try:
+                await self.close_settler(tr)
+            finally:
+                self._finish(tr)
+                await self._notify(tr)
+            return
         try:
             await self._release_unused(tr)
             await self._note_dex_failures(tr)
@@ -617,6 +636,9 @@ class ExecutionEngine:
             else:
                 tr.status = TradeStatus.FILLED
             await self._account_and_book(tr)
+            if tr.extra.get("carry_entry") and self.carry_opener is not None:
+                # the matched part of the pair is a live carry position even if the rest was hedged
+                await self.carry_opener(tr)
         finally:
             if tr.status is not TradeStatus.UNKNOWN:
                 self._finish(tr)

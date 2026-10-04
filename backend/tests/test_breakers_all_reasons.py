@@ -204,7 +204,7 @@ def test_balance_and_position_discrepancy_and_manual(tmp_path):
 
         h2, _ = await carry_harness()
         _, pos = await open_position(h2)
-        await h2.pm.reconcile({})
+        await h2.pm.reconcile([])
         assert _has(h2.breakers, CircuitBreakerReason.POSITION_DISCREPANCY)
         from fedr.engine.emergency_stop import EmergencyStop
 

@@ -104,7 +104,14 @@ class PaperLedger:
             self.dirty = True
 
     async def settle_perp(
-        self, venue: str, quote: str, side, notional: Decimal, fee_quote: Decimal, reduce_only: bool = False
+        self,
+        venue: str,
+        quote: str,
+        side,
+        notional: Decimal,
+        fee_quote: Decimal,
+        reduce_only: bool = False,
+        entry_notional: Decimal | None = None,
     ) -> None:
         """Linear perpetual leg at 1x (paper model).
 
@@ -123,8 +130,10 @@ class PaperLedger:
                 b.free -= (notional - moved) + fee_quote
                 coll.free += notional
             else:
-                entry = coll.free
-                coll.free = ZERO
+                # release only the collateral of the part being closed (other positions on the same
+                # venue keep theirs); without the entry notional the whole bucket belongs to this close
+                entry = coll.free if entry_notional is None else min(coll.free, entry_notional)
+                coll.free -= entry
                 b.free += entry + (entry - notional) - fee_quote
             self.dirty = True
 
